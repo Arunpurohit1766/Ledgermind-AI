@@ -379,7 +379,7 @@ if nav == "0. 3-Way System Architecture & Data Funnel":
             <li><b>Source 3: Bank Clearing Statements ({settled_count:,} Records):</b> The acquiring bank ledger of cleared deposits matched with a UTR reference.</li>
         </ol>
         <p style="color: #94A3B8; font-size: 0.9rem;">
-            <b>Why It Fails Manually:</b> Gateways occasionally overcharge processing fees (e.g. charging 2.6% instead of 1.9%), miscalculate GST (28% instead of statutory 18%), or delay funds in escrow. LedgerMind AI automates 3-way synchronization, applies live Machine Learning anomaly risk scoring, and drafts double-entry balancing proposals.
+            <b>Why It Fails Manually:</b> Gateways occasionally overcharge processing fees (e.g. charging 2.6% instead of 1.9%), miscalculate GST (28% instead of configured 18% benchmark), or delay funds in escrow. LedgerMind AI automates 3-way synchronization, applies live Machine Learning anomaly risk scoring, and drafts double-entry balancing proposals.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -398,7 +398,7 @@ if nav == "0. 3-Way System Architecture & Data Funnel":
            +---> [   {on_hold_count:,} ON_HOLD ] (Gateway risk engine escrow hold)
            |
            v
-      {settled_count:,} SETTLED Transactions (Cleared in Bank Account with 12-Digit UTR)
+      {settled_count:,} SETTLED Transactions (Cleared in Bank Account with UTR reference)
     ```
     """)
     
@@ -659,7 +659,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
                     ord_id,
                     disc_type,
                     tot_leak,
-                    round(ml_conf, 4) if not np.isnan(ml_conf) else 0.50,
+                    round(float(ml_conf), 4) if (ml_conf is not None and not pd.isna(ml_conf)) else None,
                     row['Exception Cause'],
                     action_code,
                     datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -757,6 +757,18 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             df_u_orders = pd.read_csv(file_orders)
             df_u_gw = pd.read_csv(file_gw)
             df_u_bank = pd.read_csv(file_bank)
+            
+            # Normalize column names by stripping whitespace
+            df_u_orders.columns = df_u_orders.columns.astype(str).str.strip()
+            df_u_gw.columns = df_u_gw.columns.astype(str).str.strip()
+            df_u_bank.columns = df_u_bank.columns.astype(str).str.strip()
+            
+            # Normalize key string columns
+            df_u_orders['order_id'] = df_u_orders['order_id'].astype(str).str.strip()
+            df_u_gw['order_id'] = df_u_gw['order_id'].astype(str).str.strip()
+            df_u_gw['gateway_txn_id'] = df_u_gw['gateway_txn_id'].astype(str).str.strip()
+            df_u_bank['gateway_txn_id'] = df_u_bank['gateway_txn_id'].astype(str).str.strip()
+            df_u_bank['utr_number'] = df_u_bank['utr_number'].astype(str).str.strip()
             
             # 1. Comprehensive Schema & Required Column Validation
             req_orders = {'order_id', 'order_amount', 'payment_method', 'merchant_category', 'order_status'}

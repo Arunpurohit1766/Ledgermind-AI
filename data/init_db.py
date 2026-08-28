@@ -9,6 +9,7 @@ def initialize_database(db_path, n_records=50000, random_state=42):
     if os.path.exists(db_path):
         os.remove(db_path)
     conn = sqlite3.connect(db_path)
+    conn.execute('PRAGMA foreign_keys = ON;')
     cursor = conn.cursor()
     
     cursor.execute('''

@@ -21,6 +21,7 @@ except ImportError:
 def load_clean_data(db_path, random_state=42):
     print(f"Connecting to SQLite database: {db_path}")
     conn = sqlite3.connect(db_path)
+    conn.execute('PRAGMA foreign_keys = ON;')
     
     query = """
     SELECT 
