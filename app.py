@@ -21,14 +21,12 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap');
 
-    /* Global Reset & Base Typography */
     .stApp {
         background-color: #05080E;
         color: #E2E8F0;
         font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     
-    /* Top Header Bar */
     .top-navbar {
         display: flex;
         align-items: center;
@@ -102,7 +100,6 @@ st.markdown("""
         border-radius: 6px;
     }
     
-    /* Navigation: Rounded Card Buttons */
     div[data-testid="stRadio"] > div[role="radiogroup"] {
         display: flex;
         flex-direction: column;
@@ -132,7 +129,6 @@ st.markdown("""
         font-weight: 500 !important;
     }
     
-    /* Explainer Cards */
     .explainer-card {
         background: linear-gradient(180deg, #0C111C 0%, #080C14 100%);
         border: 1px solid #1C273E;
@@ -140,13 +136,6 @@ st.markdown("""
         padding: 20px 24px;
         margin-bottom: 18px;
         box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
-    }
-    .guide-card {
-        background: linear-gradient(180deg, #0D1628 0%, #090E1A 100%);
-        border: 1px solid #25385C;
-        border-radius: 10px;
-        padding: 20px 24px;
-        margin-bottom: 18px;
     }
     .step-badge {
         background-color: #1E293B;
@@ -173,14 +162,11 @@ st.markdown("""
         letter-spacing: 0.04em;
     }
     
-    /* Headers */
     h1, h2, h3, h4, h5, h6 {
         color: #F8FAFC !important;
         font-weight: 650 !important;
         letter-spacing: -0.025em;
     }
-    
-    /* Metrics */
     div[data-testid="stMetricValue"] {
         font-size: 1.62rem !important;
         color: #FFFFFF !important;
@@ -194,38 +180,28 @@ st.markdown("""
         letter-spacing: 0.06em;
         font-weight: 600;
     }
-    
-    /* Sidebar */
     section[data-testid="stSidebar"] {
         background-color: #030508;
         border-right: 1px solid #121824;
     }
-    
-    /* Dataframes */
     div[data-testid="stDataFrame"] {
         border: 1px solid #182236;
         border-radius: 8px;
         background-color: #070A11;
         overflow: hidden;
     }
-    
-    /* Inputs & Selectboxes */
     .stTextInput>div>div>input, .stSelectbox>div>div>div {
         background-color: #090D16 !important;
         color: #F8FAFC !important;
         border: 1px solid #202D45 !important;
         border-radius: 6px !important;
     }
-    
-    /* File uploader */
     div[data-testid="stFileUploader"] {
         background-color: #090D16;
         border: 1px dashed #2B3A57;
         border-radius: 8px;
         padding: 16px;
     }
-    
-    /* Buttons */
     .stButton>button {
         background: linear-gradient(180deg, #151F33 0%, #0E1524 100%) !important;
         color: #F8FAFC !important;
@@ -275,35 +251,34 @@ ml_model = load_ml_pipeline()
 
 def run_ml_inference(df_input):
     """
-    Executes 100% deterministic live inference using the serialized Scikit-learn Pipeline (8 clean business features).
-    Zero random number generation — identical inputs always yield identical risk scores.
+    Executes deterministic live inference using the serialized Scikit-learn Pipeline (8 clean business features).
+    Fails visibly if the pipeline is unavailable rather than returning fake scores.
     """
     df_copy = df_input.copy()
     n = len(df_copy)
     
-    # Deterministic feature extraction purely from standard transaction data
-    if 'order_timestamp' in df_copy.columns:
-        df_copy['order_hour'] = pd.to_datetime(df_copy['order_timestamp']).dt.hour
-    else:
-        df_copy['order_hour'] = 14
+    if ml_model is None:
+        return np.full(n, np.nan)
         
-    df_copy['is_high_value'] = (df_copy['order_amount'] > 10000).astype(int)
-    df_copy['log_amount'] = np.log1p(df_copy['order_amount'])
-    df_copy['category_risk_prior'] = df_copy['merchant_category'].map(CATEGORY_RISK_MAP).fillna(0.25)
-    
-    if 'contract_mdr_rate' not in df_copy.columns:
-        rate_map = {'UPI': 0.000, 'Debit Card': 0.009, 'Credit Card': 0.019, 'Net Banking': 0.015}
-        df_copy['contract_mdr_rate'] = df_copy['payment_method'].map(rate_map).fillna(0.015)
+    try:
+        if 'order_timestamp' in df_copy.columns:
+            df_copy['order_hour'] = pd.to_datetime(df_copy['order_timestamp']).dt.hour
+        else:
+            df_copy['order_hour'] = 14
+            
+        df_copy['is_high_value'] = (df_copy['order_amount'] > 10000).astype(int)
+        df_copy['log_amount'] = np.log1p(df_copy['order_amount'])
+        df_copy['category_risk_prior'] = df_copy['merchant_category'].map(CATEGORY_RISK_MAP).fillna(0.25)
         
-    if ml_model is not None:
-        try:
-            X_input = df_copy[FEATURE_COLS]
-            probs = ml_model.predict_proba(X_input)[:, 1]
-            return np.round(probs, 4)
-        except Exception as e:
-            st.warning(f"ML Pipeline Inference Note: {str(e)}")
-            return np.full(n, 0.05)
-    return np.full(n, 0.05)
+        if 'contract_mdr_rate' not in df_copy.columns:
+            rate_map = {'UPI': 0.000, 'Debit Card': 0.009, 'Credit Card': 0.019, 'Net Banking': 0.015}
+            df_copy['contract_mdr_rate'] = df_copy['payment_method'].map(rate_map).fillna(0.015)
+            
+        X_input = df_copy[FEATURE_COLS]
+        probs = ml_model.predict_proba(X_input)[:, 1]
+        return np.round(probs, 4)
+    except Exception:
+        return np.full(n, np.nan)
 
 # Top Header Banner
 st.markdown("""
@@ -351,14 +326,18 @@ st.sidebar.markdown("""
 if os.path.exists(DB_PATH):
     conn = get_db_connection()
     c = conn.cursor()
-    order_count = c.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
-    settle_count = c.execute("SELECT COUNT(*) FROM gateway_settlements").fetchone()[0]
+    total_orders = c.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+    failed_count = c.execute("SELECT COUNT(*) FROM orders WHERE order_status = 'FAILED'").fetchone()[0]
+    refunded_count = c.execute("SELECT COUNT(*) FROM orders WHERE order_status = 'REFUNDED'").fetchone()[0]
+    success_count = c.execute("SELECT COUNT(*) FROM orders WHERE order_status = 'SUCCESS'").fetchone()[0]
+    on_hold_count = c.execute("SELECT COUNT(*) FROM gateway_settlements WHERE settlement_status = 'ON_HOLD'").fetchone()[0]
+    settled_count = c.execute("SELECT COUNT(*) FROM gateway_settlements WHERE settlement_status = 'SETTLED'").fetchone()[0]
     bank_count = c.execute("SELECT COUNT(*) FROM bank_statements").fetchone()[0]
     
     st.sidebar.markdown("**Multi-Source Staging Status:**")
     st.sidebar.caption(f"Source: `financial_ledger.db` ({round(os.path.getsize(DB_PATH)/(1024*1024), 2)} MB)")
-    st.sidebar.metric("Source 1: Merchant Orders", f"{order_count:,}")
-    st.sidebar.metric("Source 2: Gateway Settlements", f"{settle_count:,}")
+    st.sidebar.metric("Source 1: Merchant Orders", f"{total_orders:,}")
+    st.sidebar.metric("Source 2: Gateway Settlements", f"{success_count:,}")
     st.sidebar.metric("Source 3: Bank Realizations", f"{bank_count:,}")
 else:
     st.sidebar.error("Database connection unavailable.")
@@ -366,7 +345,6 @@ else:
 
 st.sidebar.markdown("<br/>**Reconciliation Workflow**", unsafe_allow_html=True)
 
-# 4-Module Focused Navigation
 nav = st.sidebar.radio(
     "Reconciliation Workflow",
     [
@@ -380,13 +358,13 @@ nav = st.sidebar.radio(
 )
 
 # -------------------------------------------------------------
-# Module 0: 3-Way System Architecture & Data Funnel
+# Module 0: 3-Way System Architecture & Data Funnel (Dynamic Live Counts)
 # -------------------------------------------------------------
 if nav == "0. 3-Way System Architecture & Data Funnel":
     st.subheader("Multi-Source 3-Way Reconciliation Architecture")
     st.caption("How LedgerMind AI synchronizes 3 disconnected financial ledgers and closes the verification bottleneck.")
     
-    st.markdown("""
+    st.markdown(f"""
     <div class="explainer-card">
         <div class="step-badge">Track 04 Problem Context</div>
         <h4 style="margin-top: 4px; color: #FFFFFF;">The 3-Source Reconciliation Bottleneck</h4>
@@ -394,31 +372,31 @@ if nav == "0. 3-Way System Architecture & Data Funnel":
             In high-volume digital payments, money travels across <b>3 separate systems</b> before landing in a merchant's bank account:
         </p>
         <ol style="color: #CBD5E1; font-size: 0.88rem; line-height: 1.8;">
-            <li><b>Source 1: Merchant Order DB (50,000 Records):</b> The customer checkout record with purchase amounts and payment instruments.</li>
-            <li><b>Source 2: Payment Gateway Feed (48,515 Records):</b> Razorpay's settlement deductions for contracted MDR fees, 18% GST, and risk escrow holds.</li>
-            <li><b>Source 3: Bank Clearing Statements (47,239 Records):</b> The acquiring bank (HDFC/ICICI) ledger of cleared deposits matched with a 12-digit UTR reference.</li>
+            <li><b>Source 1: Merchant Order DB ({total_orders:,} Records):</b> The customer checkout record with purchase amounts and payment instruments.</li>
+            <li><b>Source 2: Payment Gateway Feed ({success_count:,} Records):</b> Razorpay's settlement deductions for contracted MDR fees, 18% GST, and risk escrow holds.</li>
+            <li><b>Source 3: Bank Clearing Statements ({settled_count:,} Records):</b> The acquiring bank ledger of cleared deposits matched with a 12-digit UTR reference.</li>
         </ol>
         <p style="color: #94A3B8; font-size: 0.9rem;">
-            <b>Why It Fails Manually:</b> Gateways occasionally overcharge processing fees (e.g. charging 2.6% instead of 1.9%), miscalculate GST (28% instead of statutory 18%), or delay funds in escrow. LedgerMind AI automates 3-way synchronization, applies live Machine Learning anomaly detection, and proposes double-entry balancing workflows.
+            <b>Why It Fails Manually:</b> Gateways occasionally overcharge processing fees (e.g. charging 2.6% instead of 1.9%), miscalculate GST (28% instead of statutory 18%), or delay funds in escrow. LedgerMind AI automates 3-way synchronization, applies live Machine Learning anomaly risk scoring, and drafts double-entry balancing proposals.
         </p>
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown("#### Real-World 50,000-Transaction Lifecycle Funnel")
-    st.markdown("""
+    st.markdown("#### Real-World 50,000-Transaction Lifecycle Funnel (Live Database Query)")
+    st.markdown(f"""
     ```
-      50,000 Ingested Orders (Merchant DB)
+      {total_orders:,} Ingested Orders (Merchant DB)
            |
-           +---> [ 1,000 FAILED ] (Bank network timeout / OTP failure)
-           +---> [   524 REFUNDED ] (Customer order cancellations)
-           |
-           v
-      48,515 SUCCESS Orders (Sent to Razorpay Gateway)
-           |
-           +---> [   468 ON_HOLD ] (Gateway risk engine escrow hold)
+           +---> [ {failed_count:,} FAILED ] (Bank network timeout / OTP failure)
+           +---> [   {refunded_count:,} REFUNDED ] (Customer order cancellations)
            |
            v
-      47,239 SETTLED Transactions (Cleared in Bank Account with 12-Digit UTR)
+      {success_count:,} SUCCESS Orders (Sent to Payment Gateway)
+           |
+           +---> [   {on_hold_count:,} ON_HOLD ] (Gateway risk engine escrow hold)
+           |
+           v
+      {settled_count:,} SETTLED Transactions (Cleared in Bank Account with 12-Digit UTR)
     ```
     """)
     
@@ -426,25 +404,25 @@ if nav == "0. 3-Way System Architecture & Data Funnel":
     st.markdown("#### Multi-Source Schema Explorer")
     st.caption("Inspect live data records across all 3 raw sources and the dynamic audit recovery ledger.")
     
-    selected_table = st.selectbox("Select Data Source Table to Inspect", ["Source 1: orders", "Source 2: gateway_settlements", "Source 3: bank_statements", "audit_ledger (Self-Healing Log)"])
+    selected_table = st.selectbox("Select Data Source Table to Inspect", ["Source 1: orders", "Source 2: gateway_settlements", "Source 3: bank_statements", "audit_ledger (Resolution Log)"])
     
     if "orders" in selected_table:
         st.markdown("**Source 1: Merchant Internal Orders DB**")
-        df_preview = pd.read_sql_query("SELECT order_id, customer_id, order_amount, payment_method, merchant_category, order_status, order_timestamp FROM orders LIMIT 8;", conn)
+        df_preview = pd.read_sql_query("SELECT order_id, customer_id, order_amount, payment_method, merchant_category, order_status, order_timestamp FROM orders ORDER BY order_id LIMIT 8;", conn)
         st.dataframe(df_preview, width='stretch')
         
     elif "gateway" in selected_table:
         st.markdown("**Source 2: Payment Gateway Settlements (Razorpay Feed)**")
-        df_preview = pd.read_sql_query("SELECT settlement_id, order_id, gateway_txn_id, contract_mdr_rate, actual_fee_charged, gst_charged, net_settlement_amount, settlement_status FROM gateway_settlements LIMIT 8;", conn)
+        df_preview = pd.read_sql_query("SELECT settlement_id, order_id, gateway_txn_id, contract_mdr_rate, actual_fee_charged, gst_charged, net_settlement_amount, settlement_status FROM gateway_settlements ORDER BY settlement_id LIMIT 8;", conn)
         st.dataframe(df_preview, width='stretch')
         
     elif "bank" in selected_table:
         st.markdown("**Source 3: Bank Realization Statements (UTR Clearing Feed)**")
-        df_preview = pd.read_sql_query("SELECT bank_txn_id, gateway_txn_id, utr_number, credit_amount, clearing_status, bank_timestamp FROM bank_statements LIMIT 8;", conn)
+        df_preview = pd.read_sql_query("SELECT bank_txn_id, gateway_txn_id, utr_number, credit_amount, clearing_status, bank_timestamp FROM bank_statements ORDER BY bank_txn_id LIMIT 8;", conn)
         st.dataframe(df_preview, width='stretch')
         
     elif "audit" in selected_table:
-        st.markdown("**Autonomous Audit Recovery Ledger (Dynamic Session Entries)**")
+        st.markdown("**Audit Resolution Ledger (Dynamic Session Entries)**")
         session_audits = st.session_state.get('session_audit_logs', [])
         if session_audits and len(session_audits) > 0:
             df_preview = pd.DataFrame(session_audits)
@@ -462,7 +440,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
     
     col_ctrl1, col_ctrl2 = st.columns([1, 2])
     with col_ctrl1:
-        batch_size = st.select_slider("Select Batch Verification Size (Records)", options=[50, 100, 250, 500, 1000, 5000, 48515], value=500)
+        batch_size = st.select_slider("Select Batch Verification Size (Records)", options=[50, 100, 250, 500, 1000, 5000, success_count], value=500)
     with col_ctrl2:
         st.markdown("<br/>", unsafe_allow_html=True)
         run_batch = st.button("Run Multi-Source 3-Way Reconciliation")
@@ -471,7 +449,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
         if run_batch:
             t_start = time.time()
             
-            # Relational 3-way join query across Orders, Gateway Settlements, and Bank Statements
+            # Deterministic Main Batch Query with LEFT JOINs and ORDER BY
             query = f"""
             SELECT 
                 o.order_id,
@@ -497,6 +475,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
             LEFT JOIN gateway_settlements g ON o.order_id = g.order_id
             LEFT JOIN bank_statements b ON g.gateway_txn_id = b.gateway_txn_id
             WHERE o.order_status = 'SUCCESS'
+            ORDER BY o.order_id
             LIMIT {batch_size};
             """
             
@@ -504,7 +483,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
             t_elapsed = time.time() - t_start
             throughput = int(len(df_batch) / (t_elapsed + 1e-6))
             
-            # ----------------- TRUE ACTIVE ML INFERENCE (8 FEATURES) -----------------
+            # Active deterministic ML risk scoring
             df_batch['ai_anomaly_risk'] = run_ml_inference(df_batch)
                 
             st.session_state['current_batch_df'] = df_batch
@@ -515,7 +494,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
         throughput = st.session_state['current_batch_throughput']
         latency_ms = st.session_state['current_batch_latency']
         
-        # 3-Way Reconciliation Matching Criteria (Honest Exception detection)
+        # Unified Canonical 3-Way Clean Predicate
         is_clean = (
             (df_batch['settlement_status'] == 'SETTLED') & 
             (df_batch['fee_variance'] <= 2.0) & 
@@ -532,13 +511,15 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
         
         df_exceptions = df_batch[~is_clean].copy()
         
-        def run_row_diagnosis(row):
-            d = diagnose_discrepancy(row.to_dict())
-            return d['root_cause']
-            
+        # SINGLE SOURCE OF TRUTH: Execute diagnose_discrepancy for all exceptions
         if not df_exceptions.empty:
-            df_exceptions['Exception Cause'] = df_exceptions.apply(run_row_diagnosis, axis=1)
-            total_leakage_inr = df_exceptions['fee_variance'].clip(lower=0).sum() + df_exceptions['tax_variance'].clip(lower=0).sum() + df_exceptions['bank_variance'].clip(lower=0).sum()
+            diagnoses = df_exceptions.apply(lambda r: diagnose_discrepancy(r.to_dict()), axis=1)
+            df_exceptions['Exception Cause'] = [d['root_cause'] for d in diagnoses]
+            df_exceptions['Discrepancy Category'] = [d['discrepancy_type'] for d in diagnoses]
+            df_exceptions['Leakage Amount'] = [d['leakage_amount'] for d in diagnoses]
+            df_exceptions['Dispute Claim Type'] = [d['claim_type'] for d in diagnoses]
+            df_exceptions['Audit Evidence'] = [d['evidence'] for d in diagnoses]
+            total_leakage_inr = df_exceptions['Leakage Amount'].sum()
         else:
             total_leakage_inr = 0.0
         
@@ -549,11 +530,11 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
         kpi1.metric("3-Way Match Rate", f"{match_rate}%", f"{matched_count}/{len(df_batch)} Reconciled")
         kpi2.metric("Join & ML Throughput", f"{throughput:,} rec/sec", f"Latency: {latency_ms} ms")
         kpi3.metric("Verified Bank Inflow", f"INR {df_batch[is_clean]['credit_amount'].sum():,.2f}")
-        kpi4.metric("Honest Exceptions Flagged", f"{exception_count} Records", f"INR {total_leakage_inr:,.2f} Leakage", delta_color="inverse")
+        kpi4.metric("Honest Exceptions Flagged", f"{exception_count} Records", f"INR {total_leakage_inr:,.2f} Exposure", delta_color="inverse")
         
         st.markdown("<br/>", unsafe_allow_html=True)
         st.markdown("#### The Honest Exception List (Live Active ML Anomaly Scores)")
-        st.caption("Evaluated by the live 8-feature deterministic XGBoost Pipeline (`best_reconciliation_pipeline.joblib`). Line items isolated with root causes and real ML probability scores.")
+        st.caption("Evaluated by the live 8-feature deterministic XGBoost Pipeline (`best_reconciliation_pipeline.joblib`). Line items isolated with root causes and real ML risk scores.")
         
         disp_cols = ['order_id', 'order_amount', 'payment_method', 'merchant_category', 'actual_fee_charged', 'gst_charged', 'credit_amount', 'ai_anomaly_risk', 'Exception Cause']
         st.dataframe(df_exceptions[disp_cols].rename(columns={
@@ -564,7 +545,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
             'actual_fee_charged': 'Gateway Fee (INR)',
             'gst_charged': 'GST Paid (INR)',
             'credit_amount': 'Bank Received (INR)',
-            'ai_anomaly_risk': 'AI Anomaly Risk (ML Prob)'
+            'ai_anomaly_risk': 'AI Anomaly Risk Score'
         }), width='stretch')
         
         # ----------------- FORMAL AUDIT DEFENSE PACKET GENERATOR -----------------
@@ -585,7 +566,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
             <h4 style="margin-top: 4px; color: #FFFFFF;">Automated Resolution Drafter & Double-Entry Journal Generator</h4>
             <p style="color: #94A3B8; font-size: 0.88rem; margin: 0;">
                 To streamline finance-ops resolution, the engine generates audit-ready accounting entries and claim files:
-                <br/>1. Drafts <b>GAAP Double-Entry Accounting Journal Proposals</b> (`DR 1140 Gateway Receivable / CR 5120 Fee Expense`).
+                <br/>1. Drafts <b>Double-Entry Accounting Journal Proposals</b> with balanced debit/credit allocation.
                 <br/>2. Compiles <b>API-Ready Dispute JSON Payloads</b> formatted for submission to gateway dispute endpoints.
                 <br/>3. Models the <b>Projected 100% Reconciled Parity</b> once proposed adjustments are reviewed and approved.
             </p>
@@ -600,18 +581,15 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
             
             for i, (idx, row) in enumerate(df_exceptions.iterrows(), 1):
                 ord_id = row['order_id']
-                diag = diagnose_discrepancy(row.to_dict())
-                disc_type = diag['discrepancy_type']
-                tot_leak = diag['leakage_amount']
-                ml_conf = float(row.get('ai_anomaly_risk', 0.50))
+                disc_type = row['Discrepancy Category']
+                tot_leak = row['Leakage Amount']
+                ml_conf = float(row.get('ai_anomaly_risk') or 0.50)
                 
-                # --- TRUE BALANCED GAAP DOUBLE-ENTRY JOURNAL MAPPING (Total Debits == Total Credits) ---
+                # Compound-aware Double-Entry Journal Mapping (Credits strictly sum to Debits)
                 f_var = max(0.0, float(row.get('fee_variance') or 0.0))
                 t_var = max(0.0, float(row.get('tax_variance') or 0.0))
                 b_var = max(0.0, float(row.get('bank_variance') or 0.0))
-                net_settle = float(row.get('net_settlement_amount') or 0.0)
                 
-                # Compound-aware GAAP Journal Mapping: credits strictly match underlying variances
                 if disc_type == 'MISSING_GATEWAY_RECORD':
                     dr_entry = f"DR 1145: Unsettled Merchant Order Clearing (INR {tot_leak:,.2f})"
                     cr_entry = f"CR 4010: Sales Revenue Suspense (INR {tot_leak:,.2f})"
@@ -622,7 +600,6 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
                     dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
                     cr_entry = f"CR 1090: Bank Realization Inflow Suspense (INR {tot_leak:,.2f})"
                 else:
-                    # Handles FEE_OVERCHARGE, GST_MISMATCH, BANK_AMOUNT_MISMATCH, and any Compound combinations
                     dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
                     cr_parts = []
                     if f_var > 0:
@@ -637,22 +614,21 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
                     
                 action_code = f"PROPOSED_JOURNAL | {dr_entry} // {cr_entry}"
                 
-                # Dynamic API-ready dispute JSON payload mapped to actual diagnostic state
                 dispute_payload = {
                     "dispute_ref": f"DSP-{ord_id}",
                     "order_id": ord_id,
-                    "claim_type": diag['claim_type'],
+                    "claim_type": row['Dispute Claim Type'],
                     "discrepancy_category": disc_type,
                     "claim_amount": tot_leak,
-                    "ai_confidence_score": round(ml_conf, 4),
-                    "evidence": diag['evidence']
+                    "model_risk_score": round(ml_conf, 4) if not np.isnan(ml_conf) else None,
+                    "evidence": row['Audit Evidence']
                 }
                 
                 heal_logs.append({
                     'Order ID': ord_id,
                     'Discrepancy Category': disc_type,
-                    'Discrepancy Cause': diag['root_cause'],
-                    'Claimable Leakage (INR)': tot_leak,
+                    'Discrepancy Cause': row['Exception Cause'],
+                    'Claimable Exposure (INR)': tot_leak,
                     'Proposed Journal Adjustment': action_code,
                     'Dispute API Payload': json.dumps(dispute_payload)
                 })
@@ -662,7 +638,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
                     'order_id': ord_id,
                     'anomaly_type': disc_type,
                     'leakage_amount': tot_leak,
-                    'root_cause_explanation': diag['root_cause'],
+                    'root_cause_explanation': row['Exception Cause'],
                     'action_taken': action_code
                 })
                 
@@ -670,15 +646,16 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
                     ord_id,
                     disc_type,
                     tot_leak,
-                    round(ml_conf, 4), # Live genuine ML probability score
-                    diag['root_cause'],
+                    round(ml_conf, 4) if not np.isnan(ml_conf) else 0.50,
+                    row['Exception Cause'],
                     action_code,
                     datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 ))
                 
             df_heal = pd.DataFrame(heal_logs)
             t_heal_elapsed = round((time.time() - t_heal_start) * 1000, 2)
-            total_recovered_amount = df_heal['Claimable Leakage (INR)'].sum() if not df_heal.empty else 0.0
+            total_recovered_amount = df_heal['Claimable Exposure (INR)'].sum() if not df_heal.empty else 0.0
+            
             st.session_state['session_audit_logs'] = formatted_session_audits
             
             try:
@@ -688,18 +665,17 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
                     db_audit_rows
                 )
                 conn.commit()
-            except Exception:
-                pass
-            
-            st.success(f"Resolution Workflows Generated in {t_heal_elapsed} ms for {len(df_heal)} Exceptions.")
+                st.success(f"Resolution Workflows Generated in {t_heal_elapsed} ms. Audit ledger successfully persisted to SQLite.")
+            except Exception as e:
+                st.error(f"Audit Persistence Warning: Resolution generated in memory, but SQLite persistence failed: {str(e)}")
             
             h_col1, h_col2, h_col3 = st.columns(3)
             h_col1.metric("Recovery Volume Proposed", f"INR {total_recovered_amount:,.2f}", "Drafted for Review")
-            h_col2.metric("Journal Adjustments Drafted", f"{len(df_heal)} Proposed Entries", "GL Balanced")
+            h_col2.metric("Journal Adjustments Drafted", f"{len(df_heal)} Proposed Entries", "Debits == Credits")
             h_col3.metric("Projected Reconciled Parity", "100.0%", "Post-Approval State")
             
             st.markdown("#### Proposed Resolution Ledger & Draft Journal Entries")
-            st.dataframe(df_heal[['Order ID', 'Discrepancy Cause', 'Claimable Leakage (INR)', 'Proposed Journal Adjustment']], width='stretch')
+            st.dataframe(df_heal[['Order ID', 'Discrepancy Category', 'Claimable Exposure (INR)', 'Proposed Journal Adjustment']], width='stretch')
             
             heal_csv = df_heal.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -720,7 +696,7 @@ elif nav == "2. Custom 3-File CSV Multi-Source Ingestion":
     <div class="explainer-card">
         <div class="step-badge">Multi-Source Ingestion</div>
         <p style="color: #94A3B8; font-size: 0.88rem; margin: 0;">
-            Evaluators can upload 3 independent raw CSV files below. The engine stages them into an in-memory SQLite database, executes live 3-way joins on <code>order_id</code> and <code>gateway_txn_id</code>, evaluates active ML anomaly risk deterministically, and outputs the reconciled dataset.
+            Evaluators can upload 3 independent raw CSV files below. The engine stages them into an in-memory SQLite database, executes live 3-way joins on <code>order_id</code> and <code>gateway_txn_id</code>, evaluates active ML anomaly risk deterministically, diagnoses exceptions with human-readable causes, and outputs the reconciled dataset.
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -769,22 +745,34 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             df_u_gw = pd.read_csv(file_gw)
             df_u_bank = pd.read_csv(file_bank)
             
-            # 1. Basic Schema & Required Column Validation
+            # 1. Comprehensive Schema & Required Column Validation
             req_orders = {'order_id', 'order_amount', 'payment_method', 'merchant_category'}
-            req_gw = {'settlement_id', 'order_id', 'gateway_txn_id', 'net_settlement_amount'}
-            req_bank = {'gateway_txn_id', 'credit_amount'}
+            req_gw = {'settlement_id', 'order_id', 'gateway_txn_id', 'contract_mdr_rate', 'actual_fee_charged', 'gst_charged', 'net_settlement_amount', 'settlement_status'}
+            req_bank = {'gateway_txn_id', 'utr_number', 'credit_amount'}
             
             if not req_orders.issubset(df_u_orders.columns):
-                st.error(f"Validation Error: Orders CSV is missing required columns: {req_orders - set(df_u_orders.columns)}")
+                st.error(f"Validation Error: Orders CSV missing required columns: {req_orders - set(df_u_orders.columns)}")
                 st.stop()
             if not req_gw.issubset(df_u_gw.columns):
-                st.error(f"Validation Error: Gateway CSV is missing required columns: {req_gw - set(df_u_gw.columns)}")
+                st.error(f"Validation Error: Gateway CSV missing required columns: {req_gw - set(df_u_gw.columns)}")
                 st.stop()
             if not req_bank.issubset(df_u_bank.columns):
-                st.error(f"Validation Error: Bank CSV is missing required columns: {req_bank - set(df_u_bank.columns)}")
+                st.error(f"Validation Error: Bank CSV missing required columns: {req_bank - set(df_u_bank.columns)}")
                 st.stop()
                 
-            # 2. Check and flag duplicate bank realization records
+            # 2. Numeric Type Coercion Validation
+            df_u_orders['order_amount'] = pd.to_numeric(df_u_orders['order_amount'], errors='coerce')
+            df_u_gw['contract_mdr_rate'] = pd.to_numeric(df_u_gw['contract_mdr_rate'], errors='coerce')
+            df_u_gw['actual_fee_charged'] = pd.to_numeric(df_u_gw['actual_fee_charged'], errors='coerce')
+            df_u_gw['gst_charged'] = pd.to_numeric(df_u_gw['gst_charged'], errors='coerce')
+            df_u_gw['net_settlement_amount'] = pd.to_numeric(df_u_gw['net_settlement_amount'], errors='coerce')
+            df_u_bank['credit_amount'] = pd.to_numeric(df_u_bank['credit_amount'], errors='coerce')
+            
+            if df_u_orders['order_amount'].isnull().any():
+                st.error("Validation Error: Non-numeric values found in Orders 'order_amount' column.")
+                st.stop()
+                
+            # 3. Check and flag duplicate bank realization records
             dup_bank_count = df_u_bank.duplicated(subset=['gateway_txn_id']).sum()
             if dup_bank_count > 0:
                 st.warning(f"Reconciliation Warning: Found {dup_bank_count} duplicate gateway transaction ID(s) in Bank Statements. Deduplicating to prevent double-credit exposure.")
@@ -801,6 +789,8 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
                 o.order_amount,
                 o.payment_method,
                 o.merchant_category,
+                g.settlement_id,
+                g.gateway_txn_id,
                 g.contract_mdr_rate,
                 g.actual_fee_charged,
                 g.gst_charged,
@@ -820,9 +810,10 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             t_elapsed = time.time() - t_start
             throughput = int(len(df_joined) / (t_elapsed + 1e-6))
             
-            # Active deterministic ML inference on uploaded CSVs
+            # Active deterministic ML inference
             df_joined['ai_anomaly_risk'] = run_ml_inference(df_joined)
             
+            # Unified Canonical 3-Way Clean Predicate
             is_3way_clean = (
                 (df_joined['settlement_status'] == 'SETTLED') & 
                 (df_joined['fee_variance'] <= 2.0) & 
@@ -837,6 +828,12 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             exceptions_3way = int((~is_3way_clean).sum())
             parity_pct = round((matched_3way / len(df_joined)) * 100, 2)
             
+            # Run diagnostics for human-readable root cause explanation in Module 2
+            custom_diagnoses = df_joined.apply(lambda r: diagnose_discrepancy(r.to_dict()), axis=1)
+            df_joined['Exception Cause'] = [d['root_cause'] for d in custom_diagnoses]
+            df_joined['Discrepancy Category'] = [d['discrepancy_type'] for d in custom_diagnoses]
+            df_joined['Claimable Exposure (INR)'] = [d['leakage_amount'] for d in custom_diagnoses]
+            
             st.markdown("<hr style='border-color: #1C273E;'/>", unsafe_allow_html=True)
             st.markdown("#### Step 3: Multi-Source 3-Way Reconciliation Scorecard")
             
@@ -844,10 +841,10 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             c_k1.metric("3-Way Parity Match Rate", f"{parity_pct}%", f"{matched_3way}/{len(df_joined)} Synchronized")
             c_k2.metric("Multi-Table Join Throughput", f"{throughput:,} rec/sec", f"Latency: {round(t_elapsed*1000, 2)} ms")
             c_k3.metric("Verified Bank Deposit", f"INR {df_joined[is_3way_clean]['credit_amount'].sum():,.2f}")
-            c_k4.metric("Unresolved 3-Way Exceptions", f"{exceptions_3way} Records", delta_color="inverse")
+            c_k4.metric("Unresolved 3-Way Exceptions", f"{exceptions_3way} Records", f"INR {df_joined[~is_3way_clean]['Claimable Exposure (INR)'].sum():,.2f} Exposure", delta_color="inverse")
             
-            st.markdown("#### Live 3-Way Joined Matrix with Deterministic ML Anomaly Scores")
-            st.dataframe(df_joined, width='stretch')
+            st.markdown("#### Live 3-Way Joined Matrix with Deterministic ML Anomaly Scores & Root Cause Diagnostics")
+            st.dataframe(df_joined[['order_id', 'order_amount', 'payment_method', 'merchant_category', 'actual_fee_charged', 'gst_charged', 'credit_amount', 'ai_anomaly_risk', 'Discrepancy Category', 'Exception Cause']], width='stretch')
             
             multi_csv = df_joined.to_csv(index=False).encode('utf-8')
             st.download_button(
@@ -867,7 +864,7 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
 # -------------------------------------------------------------
 elif nav == "3. Financial Stress & MDR Scenario Simulator":
     st.subheader("Multi-Source Financial Stress Testing & MDR Sensitivity Simulator")
-    st.caption("Simulate how macroeconomic gateway fee changes, UPI volume shifts, or escrow hold rates impact net EBITDA and cash reserves across the 3 sources.")
+    st.caption("Illustrative payment-mix scenario model: evaluate how changes in Credit Card MDR rates, UPI volume shifts, or escrow hold rates impact net transaction economics.")
     
     col_s1, col_s2, col_s3 = st.columns(3)
     with col_s1:
@@ -903,7 +900,7 @@ elif nav == "3. Financial Stress & MDR Scenario Simulator":
     
     st.markdown("#### Sensitivity Analysis Summary")
     df_sens = pd.DataFrame({
-        'Scenario Variable': ['Simulated CC MDR Rate', 'Simulated UPI Volume Share', 'Simulated Escrow Hold Rate', 'Net EBITDA Impact'],
+        'Scenario Variable': ['Simulated CC MDR Rate', 'Simulated UPI Volume Share', 'Simulated Escrow Hold Rate', 'Modeled Net Economics Delta'],
         'Modeled Value': [f"{sim_cc_mdr}%", f"{sim_upi_share}%", f"{sim_escrow_hold}%", f"INR {-fee_impact_variance:+,.2f}"]
     })
     st.dataframe(df_sens, width='stretch')
@@ -924,10 +921,10 @@ elif nav == "4. Machine Learning Benchmark & Zero-Leakage Pipeline":
         
         st.markdown("<hr style='border-color: #1C273E;'/>", unsafe_allow_html=True)
         st.markdown("""
-        #### Technical Machine Learning Specification & Production Selection:
+        #### Technical Machine Learning Specification & Dual-Layer Architecture:
+        * **Reconciliation Truth vs. Predictive Prioritization:** The deterministic reconciliation engine establishes ground-truth financial exceptions based on contractual MDR rates, statutory 18% GST rules, and bank realization deposits. The ML model acts as an independent risk scorer that prioritizes transaction queues using checkout signals available before downstream settlement feeds arrive.
         * **Active Production Model Selection Rationale:** In real-time financial exception screening, models must balance high minority recall with inference throughput and precision. While Gradient Boosting achieved the highest PR-AUC (0.3590) and Logistic Regression achieved the highest raw linear recall (73.0%), **XGBoost (0.8059 ROC-AUC / 0.3459 PR-AUC / 70.2% Recall)** was selected as the production screening model for its non-linear interaction modeling capability and strong recall at the chosen operating threshold.
-        * **Surrogate Generalization:** Operates strictly on 8 standard checkout features (`order_amount`, `log_amount`, `payment_method`, `merchant_category`, `contract_mdr_rate`, `order_hour`, `is_high_value`, `category_risk_prior`) to flag anomaly risk even when downstream fee breakdown fields are unparsed or partially delayed.
-        * **Zero Feature Leakage:** Ground-truth fee columns (`actual_fee_charged`, `gst_charged`, `fee_variance`) are strictly excluded during training.
-        * **Preprocessing Architecture:** Scikit-learn `Pipeline` using `ColumnTransformer` (`StandardScaler` + `OneHotEncoder(handle_unknown='ignore')`).
-        * **Class Imbalance Handling:** Tuned `scale_pos_weight` to account for the minority anomaly distribution (~9.8%).
+        * **Zero Feature Leakage Architecture:** Direct rule-derived mathematical features (such as `fee_variance` or `actual_fee_charged`) are strictly excluded from the training feature set. Models are trained purely on operational input signals to ensure genuine generalization.
+        * **Preprocessing Architecture:** Scikit-learn `Pipeline` utilizing `ColumnTransformer` with `StandardScaler` for continuous dimensions and `OneHotEncoder(handle_unknown='ignore')` for discrete instruments.
+        * **Class Imbalance Management:** Tuned `scale_pos_weight` in XGBoost to handle the minority anomaly distribution (~9.8%).
         """)

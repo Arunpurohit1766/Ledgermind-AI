@@ -109,8 +109,6 @@ def initialize_database(db_path, n_records=50000, random_state=42):
         contract_rate = contract_rates[pm]
         expected_fee = np.round(amt * contract_rate, 2)
         
-        # Causal anomaly risk based purely on standard business dimensions:
-        # High-value, Credit Card / Net Banking, high-risk merchant categories, and peak business hours
         risk_score = -4.2
         if category_risk_prior.get(cat, 0.2) >= 0.5:
             risk_score += 1.8
@@ -129,7 +127,8 @@ def initialize_database(db_path, n_records=50000, random_state=42):
             sub_type = np.random.rand()
             if sub_type < 0.45:
                 anomaly = 'FEE_OVERCHARGE'
-                actual_fee = np.round(expected_fee + (amt * 0.015) + np.random.uniform(25, 95), 2)
+                fee_surcharge = min(amt * 0.08, (amt * 0.015) + np.random.uniform(25, 95))
+                actual_fee = np.round(min(amt * 0.40, expected_fee + fee_surcharge), 2)
                 gst = np.round(actual_fee * 0.18, 2)
             elif sub_type < 0.75:
                 anomaly = 'GST_MISCALCULATION'
@@ -143,7 +142,7 @@ def initialize_database(db_path, n_records=50000, random_state=42):
             actual_fee = expected_fee
             gst = np.round(actual_fee * 0.18, 2)
             
-        net_settlement = np.round(amt - actual_fee - gst, 2)
+        net_settlement = np.round(max(0.0, amt - actual_fee - gst), 2)
         settle_status = 'ON_HOLD' if anomaly == 'UNSETTLED_HOLD' else 'SETTLED'
         ts_settle = (dt_order + timedelta(hours=int(np.random.randint(12, 36)))).strftime('%Y-%m-%d %H:%M:%S')
         gateway_data.append((sid, oid, gtxn_id, amt, contract_rate, actual_fee, gst, net_settlement, settle_status, ts_settle))
@@ -154,7 +153,7 @@ def initialize_database(db_path, n_records=50000, random_state=42):
             ts_bank = (datetime.strptime(ts_settle, '%Y-%m-%d %H:%M:%S') + timedelta(hours=int(np.random.randint(4, 24)))).strftime('%Y-%m-%d %H:%M:%S')
             
             if np.random.rand() < 0.015:
-                credit_amt = np.round(max(0.0, net_settlement - np.random.uniform(25.0, 180.0)), 2)
+                credit_amt = np.round(max(0.0, net_settlement - min(net_settlement * 0.2, np.random.uniform(25.0, 180.0))), 2)
             else:
                 credit_amt = net_settlement
                 

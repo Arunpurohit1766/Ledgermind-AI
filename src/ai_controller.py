@@ -5,17 +5,10 @@ import numpy as np
 
 def diagnose_discrepancy(row):
     """
-    Comprehensive Multi-Source Diagnostic Engine for Financial Controllers.
-    Explicitly distinguishes between:
-    - MISSING_GATEWAY_RECORD
-    - MISSING_BANK_RECORD / UNREALIZED_BANK_CREDIT
-    - SETTLEMENT_ON_HOLD
-    - FEE_OVERCHARGE
-    - GST_MISCALCULATION
-    - BANK_AMOUNT_MISMATCH
-    - RECONCILED_CLEAN
+    Single Source of Truth Diagnostic Engine for Multi-Source Financial Reconciliation.
+    Evaluates transactional parameters across Orders, Gateway Settlements, and Bank Statements.
     """
-    amt = row.get('order_amount', 0.0) or 0.0
+    amt = float(row.get('order_amount', 0.0) or 0.0)
     contract_rate = row.get('contract_mdr_rate')
     actual_fee = row.get('actual_fee_charged')
     gst_charged = row.get('gst_charged')
@@ -28,9 +21,9 @@ def diagnose_discrepancy(row):
     utr_number = row.get('utr_number')
     
     # -------------------------------------------------------------
-    # State 1: Missing Gateway Settlement Record (Order never processed by Gateway)
+    # State 1: Missing Gateway Settlement Record
     # -------------------------------------------------------------
-    if pd.isna(settle_status) or settle_status is None or pd.isna(row.get('gateway_txn_id')):
+    if pd.isna(settle_status) or settle_status is None or pd.isna(row.get('gateway_txn_id')) or str(row.get('gateway_txn_id')).strip() in ['', 'nan', 'None', 'N/A']:
         return {
             'status': 'DISCREPANCY_DETECTED',
             'discrepancy_type': 'MISSING_GATEWAY_RECORD',
@@ -45,6 +38,7 @@ def diagnose_discrepancy(row):
         contract_rate = 0.015
     else:
         contract_rate = float(contract_rate)
+        
     actual_fee = float(actual_fee or 0.0)
     gst_charged = float(gst_charged or 0.0)
     net_settlement = float(net_settlement or 0.0)
@@ -59,7 +53,7 @@ def diagnose_discrepancy(row):
     evidence_parts = []
     
     # -------------------------------------------------------------
-    # State 2: Gateway Settlement On Hold (Escrow freeze / KYC hold)
+    # State 2: Gateway Settlement On Hold (Escrow freeze)
     # -------------------------------------------------------------
     if settle_status == 'ON_HOLD':
         reasons.append("Gateway Settlement On Hold: Payout delayed by Gateway risk/compliance engines or chargeback reserve hold.")
@@ -70,7 +64,7 @@ def diagnose_discrepancy(row):
         evidence_parts.append(f"Net settlement INR {net_settlement:,.2f} marked ON_HOLD by gateway despite successful customer charge.")
 
     # -------------------------------------------------------------
-    # State 3: MDR Fee Overcharge (Gateway billed rate > contracted rate)
+    # State 3: MDR Fee Overcharge
     # -------------------------------------------------------------
     fee_diff = round(actual_fee - expected_fee, 2)
     if fee_diff > 2.0:
@@ -84,7 +78,7 @@ def diagnose_discrepancy(row):
         evidence_parts.append(f"Actual fee INR {actual_fee:,.2f} exceeds contract MDR {contract_rate*100:.2f}% (INR {expected_fee:,.2f}) by INR {fee_diff:,.2f}.")
 
     # -------------------------------------------------------------
-    # State 4: GST Rate Miscalculation (Billed 28% luxury vs statutory 18% services)
+    # State 4: GST Rate Miscalculation
     # -------------------------------------------------------------
     gst_diff = round(gst_charged - expected_gst, 2)
     if gst_diff > 1.0:
@@ -97,7 +91,7 @@ def diagnose_discrepancy(row):
         evidence_parts.append(f"Billed GST INR {gst_charged:,.2f} vs statutory 18% GST INR {expected_gst:,.2f} on fee INR {actual_fee:,.2f}.")
 
     # -------------------------------------------------------------
-    # State 5: Missing Bank Realization Record (Settled by Gateway but never received in Bank)
+    # State 5: Missing or Non-Positive Bank Realization Record
     # -------------------------------------------------------------
     if settle_status == 'SETTLED':
         is_bank_missing = (
@@ -117,9 +111,9 @@ def diagnose_discrepancy(row):
             evidence_parts.append(f"Gateway marked SETTLED for INR {net_settlement:,.2f} but invalid/zero/negative bank credit (INR {float(bank_credit or 0):,.2f}) or missing UTR was received.")
             
         # -------------------------------------------------------------
-        # State 6: Bank Realization Amount Mismatch (Bank credited less than net settlement)
+        # State 6: Bank Realization Shortfall Mismatch
         # -------------------------------------------------------------
-        else: # float(bank_credit) > 0
+        else:
             bank_diff = round(net_settlement - float(bank_credit), 2)
             if abs(bank_diff) > 2.0:
                 reasons.append(f"Bank Credit Mismatch: Expected INR {net_settlement:,.2f} but bank realized INR {float(bank_credit):,.2f} (Shortfall: INR {bank_diff:,.2f}).")
@@ -135,8 +129,8 @@ def diagnose_discrepancy(row):
             'status': 'RECONCILED_CLEAN',
             'discrepancy_type': 'RECONCILED_CLEAN',
             'leakage_amount': 0.0,
-            'root_cause': 'All contract rates, 18% GST lines, and bank credits verified 100% accurate with valid UTR.',
-            'recommended_action': 'AUTO_APPROVE_LEDGER',
+            'root_cause': 'All reconciliation variances are within configured tolerances and the settlement has a valid bank realization.',
+            'recommended_action': 'MARK_RECONCILED',
             'claim_type': 'NONE',
             'evidence': 'Full 3-way synchronization verified.'
         }
@@ -154,6 +148,7 @@ def diagnose_discrepancy(row):
 def generate_dispute_packet(order_id, db_path):
     """
     Generates a formal, audit-ready Financial Dispute & Resolution Notice.
+    Uses parameterized SQL to guarantee injection safety.
     """
     conn = sqlite3.connect(db_path)
     query = """
