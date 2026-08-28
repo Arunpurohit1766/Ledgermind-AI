@@ -299,11 +299,11 @@ st.markdown("""
         </div>
     </div>
     <div class="header-status-badge">
-        <div class="meta-tag">Engine: SQLite Relational Engine</div>
-        <div class="meta-tag">Active ML: XGBoost (8-Feature Pipeline)</div>
+        <div class="meta-tag">Database: Operational</div>
+        <div class="meta-tag">ML Scorer: Operational</div>
         <div class="status-indicator">
             <div class="status-dot"></div>
-            System Status: 100% Operational
+            Reconciliation Engine: Active
         </div>
     </div>
 </div>
@@ -536,7 +536,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
         
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
         kpi1.metric("3-Way Match Rate", f"{match_rate}%", f"{matched_count}/{len(df_batch)} Reconciled")
-        kpi2.metric("Join & ML Throughput", f"{throughput:,} rec/sec", f"Latency: {latency_ms} ms")
+        kpi2.metric("3-Way Join Throughput", f"{throughput:,} rec/sec", f"Latency: {latency_ms} ms")
         kpi3.metric("Verified Bank Inflow", f"INR {df_batch[is_clean]['credit_amount'].sum():,.2f}")
         kpi4.metric("Honest Exceptions Flagged", f"{exception_count} Records", f"INR {total_leakage_inr:,.2f} Exposure", delta_color="inverse")
         
@@ -673,16 +673,14 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
             
             try:
                 c_heal = conn.cursor()
-                # Clear previous session audit logs for idempotent regeneration
-                c_heal.execute("DELETE FROM audit_ledger WHERE order_id IN ({seq})".format(seq=','.join(['?']*len(db_audit_rows))), [r[0] for r in db_audit_rows])
                 c_heal.executemany(
                     "INSERT INTO audit_ledger (order_id, anomaly_type, leakage_amount, ai_confidence, root_cause_explanation, action_taken, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     db_audit_rows
                 )
                 conn.commit()
-                st.success(f"Resolution Workflows Generated in {t_heal_elapsed} ms. Audit ledger idempotently persisted to SQLite.")
+                st.success(f"Resolution Workflows Generated in {t_heal_elapsed} ms. Audit ledger append-only entry recorded in SQLite.")
             except Exception as e:
-                st.error(f"Audit Persistence Warning: Resolution generated in memory, but SQLite persistence failed: {str(e)}")
+                st.error(f"Audit Persistence Note: Resolution workflows active in memory ({str(e)}).")
             
             h_col1, h_col2, h_col3 = st.columns(3)
             h_col1.metric("Recovery Volume Proposed", f"INR {total_recovered_amount:,.2f}", "Drafted for Review")
@@ -716,11 +714,11 @@ elif nav == "2. Custom 3-File CSV Multi-Source Ingestion":
     </div>
     """, unsafe_allow_html=True)
     
-    sample_orders_csv = """order_id,order_amount,payment_method,merchant_category,order_status
-ORD-MULTI-001,5000.00,Credit Card,Electronics,SUCCESS
-ORD-MULTI-002,12500.00,Debit Card,Travel,SUCCESS
-ORD-MULTI-003,750.00,UPI,Retail,SUCCESS
-ORD-MULTI-004,22000.00,Net Banking,SaaS,SUCCESS"""
+    sample_orders_csv = """order_id,order_amount,payment_method,merchant_category,order_timestamp,order_status
+ORD-MULTI-001,5000.00,Credit Card,Electronics,2026-01-15 14:30:00,SUCCESS
+ORD-MULTI-002,12500.00,Debit Card,Travel,2026-01-15 19:45:00,SUCCESS
+ORD-MULTI-003,750.00,UPI,Retail,2026-01-15 11:15:00,SUCCESS
+ORD-MULTI-004,22000.00,Net Banking,SaaS,2026-01-15 21:00:00,SUCCESS"""
 
     sample_gw_csv = """settlement_id,order_id,gateway_txn_id,contract_mdr_rate,actual_fee_charged,gst_charged,net_settlement_amount,settlement_status
 SET-001,ORD-MULTI-001,GTX-101,0.019,95.00,17.10,4887.90,SETTLED
@@ -761,9 +759,9 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             df_u_bank = pd.read_csv(file_bank)
             
             # 1. Comprehensive Schema & Required Column Validation
-            req_orders = {'order_id', 'order_amount', 'payment_method', 'merchant_category'}
+            req_orders = {'order_id', 'order_amount', 'payment_method', 'merchant_category', 'order_status'}
             req_gw = {'settlement_id', 'order_id', 'gateway_txn_id', 'contract_mdr_rate', 'actual_fee_charged', 'gst_charged', 'net_settlement_amount', 'settlement_status'}
-            req_bank = {'gateway_txn_id', 'utr_number', 'credit_amount'}
+            req_bank = {'gateway_txn_id', 'utr_number', 'credit_amount', 'clearing_status'}
             
             if not req_orders.issubset(df_u_orders.columns):
                 st.error(f"Validation Error: Orders CSV missing required columns: {req_orders - set(df_u_orders.columns)}")
@@ -775,7 +773,23 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
                 st.error(f"Validation Error: Bank CSV missing required columns: {req_bank - set(df_u_bank.columns)}")
                 st.stop()
                 
-            # 2. Numeric Type Coercion Validation
+            # 2. Check for duplicate primary keys in uploaded files
+            dup_orders = df_u_orders.duplicated(subset=['order_id']).sum()
+            dup_gw_settle = df_u_gw.duplicated(subset=['settlement_id']).sum()
+            dup_gw_txn = df_u_gw.duplicated(subset=['gateway_txn_id']).sum()
+            dup_bank = df_u_bank.duplicated(subset=['gateway_txn_id']).sum()
+            
+            if dup_orders > 0:
+                st.warning(f"Reconciliation Alert: Found {dup_orders} duplicate order_id(s) in Orders CSV. Staging deduplicated view.")
+                df_u_orders = df_u_orders.drop_duplicates(subset=['order_id'], keep='first')
+            if dup_gw_settle > 0 or dup_gw_txn > 0:
+                st.warning(f"Reconciliation Alert: Found duplicate settlement/gateway transaction IDs. Staging deduplicated view.")
+                df_u_gw = df_u_gw.drop_duplicates(subset=['gateway_txn_id'], keep='first')
+            if dup_bank > 0:
+                st.warning(f"Reconciliation Alert: Found {dup_bank} duplicate bank realization records. Staging deduplicated view.")
+                df_u_bank = df_u_bank.drop_duplicates(subset=['gateway_txn_id'], keep='first')
+                
+            # 3. Numeric Type Coercion Validation
             df_u_orders['order_amount'] = pd.to_numeric(df_u_orders['order_amount'], errors='coerce')
             df_u_gw['contract_mdr_rate'] = pd.to_numeric(df_u_gw['contract_mdr_rate'], errors='coerce')
             df_u_gw['actual_fee_charged'] = pd.to_numeric(df_u_gw['actual_fee_charged'], errors='coerce')
@@ -784,14 +798,8 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             df_u_bank['credit_amount'] = pd.to_numeric(df_u_bank['credit_amount'], errors='coerce')
             
             if df_u_orders['order_amount'].isnull().any():
-                st.error("Validation Error: Non-numeric values found in Orders 'order_amount' column.")
+                st.error("Validation Error: Non-numeric or null values found in Orders 'order_amount' column.")
                 st.stop()
-                
-            # 3. Check and flag duplicate bank realization records
-            dup_bank_count = df_u_bank.duplicated(subset=['gateway_txn_id']).sum()
-            if dup_bank_count > 0:
-                st.warning(f"Reconciliation Warning: Found {dup_bank_count} duplicate gateway transaction ID(s) in Bank Statements. Deduplicating to prevent double-credit exposure.")
-                df_u_bank = df_u_bank.drop_duplicates(subset=['gateway_txn_id'], keep='first')
                 
             mem_conn = sqlite3.connect(":memory:")
             df_u_orders.to_sql("temp_orders", mem_conn, index=False, if_exists="replace")
@@ -804,6 +812,8 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
                 o.order_amount,
                 o.payment_method,
                 o.merchant_category,
+                o.order_status,
+                COALESCE(o.order_timestamp, '2026-01-15 14:00:00') as order_timestamp,
                 g.settlement_id,
                 g.gateway_txn_id,
                 g.contract_mdr_rate,
@@ -813,12 +823,14 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
                 g.settlement_status,
                 b.utr_number,
                 b.credit_amount,
+                b.clearing_status,
                 round(g.actual_fee_charged - (o.order_amount * g.contract_mdr_rate), 2) as fee_variance,
                 round(g.gst_charged - (g.actual_fee_charged * 0.18), 2) as tax_variance,
                 round(g.net_settlement_amount - COALESCE(b.credit_amount, 0), 2) as bank_variance
             FROM temp_orders o
             LEFT JOIN temp_gw g ON o.order_id = g.order_id
-            LEFT JOIN temp_bank b ON g.gateway_txn_id = b.gateway_txn_id;
+            LEFT JOIN temp_bank b ON g.gateway_txn_id = b.gateway_txn_id
+            WHERE o.order_status = 'SUCCESS';
             """
             
             df_joined = pd.read_sql_query(join_sql, mem_conn)
@@ -840,6 +852,7 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
                 (df_joined['credit_amount'] > 0) & 
                 (df_joined['utr_number'].notnull()) & 
                 (~df_joined['utr_number'].astype(str).str.strip().isin(['', 'nan', 'None', 'N/A'])) & 
+                (df_joined['clearing_status'].astype(str).str.strip().str.upper() == 'CLEARED') & 
                 (df_joined['bank_variance'].abs() <= 2.0)
             )
             matched_3way = int(is_3way_clean.sum())

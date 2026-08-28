@@ -33,7 +33,7 @@ Silent fee rate overcharges (e.g. charging 2.8% instead of the contracted 1.9%),
 
 ## 2. Transaction Lifecycle & Reconciliation Funnel
 
-The relational database models the real-world drop-offs, gateway holds, and bank clearance pipeline across 50,000 enterprise transactions:
+The relational database models the real-world drop-offs, gateway holds, and bank clearance pipeline across 50,000 synthetic transactions modeled on a payment lifecycle:
 
 ```
   50,000 Ingested Orders (Merchant DB)
@@ -47,7 +47,7 @@ The relational database models the real-world drop-offs, gateway holds, and bank
        +---> [   1,276 ON_HOLD ] (Gateway risk engine escrow hold)
        |
        v
-  47,239 SETTLED Transactions (Cleared in Bank Account with 12-Digit UTR)
+  47,239 SETTLED Transactions (Cleared in Bank Account with UTR)
 ```
 
 | Funnel Stage | Record Count | Percentage | Operational Meaning |
@@ -95,7 +95,7 @@ The relational database models the real-world drop-offs, gateway holds, and bank
 |    - Module 0: 3-Way System Architecture & Data Funnel (2-Minute Visual Walkthrough & Schema)     |
 |    - Module 1: Multi-Source Batch Verification & Resolution Workflows (Active Inference & Drafing)|
 |    - Module 2: Custom 3-File CSV Multi-Source Ingestion (In-Memory Staging for External Data)     |
-|    - Module 3: Financial Stress Testing & MDR Sensitivity Simulator (EBITDA Scenario Modeling)    |
+|    - Module 3: Financial Stress Testing & MDR Sensitivity Simulator (Modeled Transaction Economics)    |
 |    - Module 4: Machine Learning Benchmark & Zero-Leakage Pipeline Specification                   |
 +---------------------------------------------------------------------------------------------------+
 ```
@@ -110,10 +110,10 @@ The relational database models the real-world drop-offs, gateway holds, and bank
 
 ### Module 1: Multi-Source Batch Verification & Exception Resolution Workflows
 - **3-Way Relational Join:** Ingests dynamic batches (50 to 48,515 records) joining Orders, Gateway settlements, and Bank UTRs in sub-second execution (<15 ms for 500 records; 552 ms for full 48k-record ledger).
-- **Active ML Anomaly Scoring:** Uses the trained Scikit-learn XGBoost pipeline (`best_reconciliation_pipeline.joblib`) to score every transaction with a deterministic **AI Anomaly Risk Probability**.
+- **Active ML Anomaly Scoring:** Uses the trained Scikit-learn XGBoost pipeline (`best_reconciliation_pipeline.joblib`) to score every transaction with a deterministic **AI Anomaly Risk Score**.
 - **The Honest Exception List:** Isolates non-matching records (MDR Overcharge, GST Miscalculation, Escrow Hold, Unrealized Bank Credit) with root-cause diagnostics.
 - **Resolution Workflow & Journal Generation:** On 1-click execution:
-  - Drafts GAAP-compliant **Double-Entry Journal Proposals**:
+  - Drafts Draft **Double-Entry Journal Proposals**:
     - `DEBIT: 1140 Gateway Settlement Receivable` (Current Asset)
     - `CREDIT: 5120 Merchant Processing Fee Expense` (Expense Recovery)
     - `CREDIT: 2210 GST Input Tax Credit` (Tax Recovery)
@@ -126,7 +126,7 @@ The relational database models the real-world drop-offs, gateway holds, and bank
 
 ### Module 3: Multi-Source Financial Stress & MDR Scenario Simulator
 - Interactive sensitivity sliders for Credit Card MDR rates (0.5% to 3.5%), UPI volume share (20% to 80%), and Gateway Escrow Hold rates.
-- Simulates gross fee variations and net EBITDA financial impact in real-time.
+- Simulates gross fee variations and net modeled transaction economics impact in real-time.
 
 ### Module 4: Machine Learning Benchmark & Zero-Leakage Pipeline
 - Evaluates 4 ML architectures under realistic imbalanced class distribution without feature leakage.
@@ -145,7 +145,7 @@ To ensure absolute reproducibility and avoid artificial synthetic assumptions (s
 5. `contract_mdr_rate`: Contractual merchant discount rate baseline.
 6. `order_hour`: Timestamp hour of day (0 to 23).
 7. `is_high_value`: High-value transaction indicator (`order_amount > 10,000`).
-8. `category_risk_prior`: Historical empirical risk factor by merchant sector.
+8. `category_risk_prior`: Configured category risk prior by merchant sector.
 
 *Zero random variables are used during inference — identical inputs always yield identical risk scores.*
 
