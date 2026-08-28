@@ -518,16 +518,16 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
         
         # SINGLE SOURCE OF TRUTH: Execute diagnose_discrepancy for all exceptions
         if not df_exceptions.empty:
-            diagnoses = df_exceptions.apply(lambda r: diagnose_discrepancy(r.to_dict()), axis=1)
-            df_exceptions['Exception Cause'] = [d['root_cause'] for d in diagnoses]
-            df_exceptions['Discrepancy Category'] = [d['discrepancy_type'] for d in diagnoses]
-            df_exceptions['Leakage Amount'] = [d['leakage_amount'] for d in diagnoses]
-            df_exceptions['Fee Variance Component'] = [d['fee_variance'] for d in diagnoses]
-            df_exceptions['Tax Variance Component'] = [d['tax_variance'] for d in diagnoses]
-            df_exceptions['Bank Variance Component'] = [d['bank_variance'] for d in diagnoses]
-            df_exceptions['Dispute Claim Type'] = [d['claim_type'] for d in diagnoses]
-            df_exceptions['Audit Evidence'] = [d['evidence'] for d in diagnoses]
-            total_leakage_inr = round(float(df_exceptions['Leakage Amount'].sum()), 2)
+            diag_list = [diagnose_discrepancy(r) for r in df_exceptions.to_dict('records')]
+            df_exceptions['Exception Cause'] = [d['root_cause'] for d in diag_list]
+            df_exceptions['Discrepancy Category'] = [d['discrepancy_type'] for d in diag_list]
+            df_exceptions['Leakage Amount'] = [d['leakage_amount'] for d in diag_list]
+            df_exceptions['Fee Variance Component'] = [d['fee_variance'] for d in diag_list]
+            df_exceptions['Tax Variance Component'] = [d['tax_variance'] for d in diag_list]
+            df_exceptions['Bank Variance Component'] = [d['bank_variance'] for d in diag_list]
+            df_exceptions['Dispute Claim Type'] = [d['claim_type'] for d in diag_list]
+            df_exceptions['Audit Evidence'] = [d['evidence'] for d in diag_list]
+            total_leakage_inr = round(float(sum(d['leakage_amount'] for d in diag_list)), 2)
         else:
             total_leakage_inr = 0.0
         
@@ -872,10 +872,10 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             parity_pct = round((matched_3way / len(df_joined)) * 100, 2)
             
             # Run diagnostics for human-readable root cause explanation in Module 2
-            custom_diagnoses = df_joined.apply(lambda r: diagnose_discrepancy(r.to_dict()), axis=1)
-            df_joined['Exception Cause'] = [d['root_cause'] for d in custom_diagnoses]
-            df_joined['Discrepancy Category'] = [d['discrepancy_type'] for d in custom_diagnoses]
-            df_joined['Claimable Exposure (INR)'] = [d['leakage_amount'] for d in custom_diagnoses]
+            custom_diag_list = [diagnose_discrepancy(r) for r in df_joined.to_dict('records')]
+            df_joined['Exception Cause'] = [d['root_cause'] for d in custom_diag_list]
+            df_joined['Discrepancy Category'] = [d['discrepancy_type'] for d in custom_diag_list]
+            df_joined['Claimable Exposure (INR)'] = [d['leakage_amount'] for d in custom_diag_list]
             
             st.markdown("<hr style='border-color: #1C273E;'/>", unsafe_allow_html=True)
             st.markdown("#### Step 3: Multi-Source 3-Way Reconciliation Scorecard")
