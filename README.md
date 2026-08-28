@@ -3,19 +3,13 @@
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Track: AI Finance Controller](https://img.shields.io/badge/Razorpay%20Buildathon-Track%2004-blueviolet.svg)](https://razorpay.com)
-
-**Live Application:** [https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/](https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/)  
-**GitHub Repository:** [https://github.com/Arunpurohit1766/Ledgermind-AI](https://github.com/Arunpurohit1766/Ledgermind-AI)  
-**Submission Track:** Track 04 — AI Finance Controller (Razorpay AI Buildathon 2026)  
-**Author:** Arun J (B.Tech CSE — Artificial Intelligence & Data Science, Swarnim Startup & Innovation University)
 
 ---
 
 ## 1. What Problem Does LedgerMind AI Solve?
 
 In high-volume digital payments and e-commerce, transaction records are fragmented across three separate systems:
-1. **Source 1: Merchant Internal Orders DB** — What the customer purchased and the instrument used (e.g., UPI, Credit Card).
+1. **Source 1: Merchant Internal Orders DB** — What the customer purchased and the payment method used (e.g., UPI, Credit Card).
 2. **Source 2: Payment Gateway Feed (e.g., Razorpay)** — What the gateway processed, deducting contracted MDR fees, configured 18% GST benchmarks, and temporary escrow holds.
 3. **Source 3: Bank Realization Statements** — What cash was actually credited into the merchant's bank account with a confirmed UTR reference.
 
@@ -40,21 +34,6 @@ Payment reconciliation between these three sources is often done manually via sp
 
 The relational database models a realistic payment lifecycle across 50,000 synthetic transactions:
 
-```
-  50,000 Ingested Orders (Merchant DB)
-       |
-       +---> [ 972 FAILED ] (Bank network timeout / OTP failure)
-       +---> [   513 REFUNDED ] (Customer order cancellations)
-       |
-       v
-  48,515 SUCCESS Orders (Gateway Processing Batch)
-       |
-       +---> [   1,276 ON_HOLD ] (Gateway risk engine escrow hold)
-       |
-       v
-  47,239 SETTLED Transactions (Cleared in Bank Account with UTR)
-```
-
 | Funnel Stage | Record Count | Percentage | Operational Meaning |
 |---|---|---|---|
 | **Total Ingested Orders** | 50,000 | 100.0% | Customer checkout attempts in merchant database |
@@ -68,32 +47,16 @@ The relational database models a realistic payment lifecycle across 50,000 synth
 
 ## 3. System Architecture & Workflow
 
-```
-+---------------------------------------------------------------------------------------------------+
-| 1. MULTI-SOURCE DATA INGESTION (SQLite Relational Engine)                                         |
-|    - orders (50,000 records: order_id, amount, timestamp, payment_method, category, status)       |
-|    - gateway_settlements (settlement_id, fees, GST, net settlement, status)                       |
-|    - bank_statements (UTR numbers, bank clearing timestamps, realized credits, clearing_status)    |
-|    - audit_ledger (append-only audit log of resolution proposals and actions)                    |
-+-------------------------------------------------+-------------------------------------------------+
-                                                  |
-                                                  v
-+---------------------------------------------------------------------------------------------------+
-| 2. DUAL-LAYER RECONCILIATION & ML RISK ENGINE                                                     |
-|    - Deterministic Rules Engine: Establishes ground-truth financial matches & exact variances      |
-|    - Single Source of Truth Diagnostics: Isolates root causes and exact-paisa exposure amounts    |
-|    - Predictive ML Risk Scorer: Scikit-learn Pipeline + XGBoost (8 standard checkout features)   |
-+-------------------------------------------------+-------------------------------------------------+
-                                                  |
-                                                  v
-+---------------------------------------------------------------------------------------------------+
-| 3. EXECUTIVE COMMAND INTERFACE (Streamlit + Financial Trust Design System)                        |
-|    - Module 0: 3-Way Architecture & Data Funnel (Live database query & schema inspector)          |
-|    - Module 1: Batch Verification & Resolution Workflows (Active inference, journals & disputes)  |
-|    - Module 2: Custom 3-File CSV Ingestion (In-memory staging & diagnostics for external files)   |
-|    - Module 3: Scenario Simulator (Illustrative payment-mix & fee sensitivity model)              |
-|    - Module 4: Machine Learning Benchmark Suite (Multi-model evaluation under class imbalance)    |
-+---------------------------------------------------------------------------------------------------+
+```mermaid
+graph TD
+    A["1. Multi-Source Data Ingestion<br/><b>SQLite Relational Engine</b><br/>• orders (50,000 records)<br/>• gateway_settlements (MDR, GST, net payout)<br/>• bank_statements (UTR, credit, clearing status)<br/>• audit_ledger (Append-only audit trail)"]
+    
+    B["2. Dual-Layer Reconciliation & ML Engine<br/><b>Deterministic Diagnostics & XGBoost Scorer</b><br/>• Ground-truth variance calculation<br/>• Single source of truth root-cause diagnostics<br/>• 8-feature pre-settlement predictive risk scoring"]
+    
+    C["3. Executive Command Interface<br/><b>Streamlit Financial Trust UI</b><br/>• Module 0: Architecture & Lifecycle Funnel<br/>• Module 1: Batch Reconciliation & Draft Journals<br/>• Module 2: Custom 3-File CSV Ingestion<br/>• Module 3: Modeled Transaction Economics<br/>• Module 4: Machine Learning Benchmark Suite"]
+    
+    A --> B
+    B --> C
 ```
 
 ### Application Modules:
@@ -251,11 +214,15 @@ The application will launch in your browser at `http://localhost:8501`.
 
 ---
 
-## 9. Author & Submission Information
+## 9. Project & Submission Details
 
-- **Author:** Arun J
-- **Institution:** Swarnim Startup & Innovation University (SSIU), Ahmedabad
-- **Program:** B.Tech Computer Science & Engineering (Artificial Intelligence & Data Science, Class of 2029)
-- **Email:** `arunj.data1766@gmail.com`
-- **GitHub:** [https://github.com/Arunpurohit1766](https://github.com/Arunpurohit1766)
-- **Live App:** [https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/](https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/)
+* **Project Name:** LedgerMind AI
+* **Submission Track:** Track 04 — AI Finance Controller (Razorpay AI Buildathon 2026)
+* **Author:** Arun J
+* **Degree / Branch:** B.Tech Computer Science & Engineering (Artificial Intelligence & Data Science)
+* **Institution:** Swarnim Startup & Innovation University (SSIU), Ahmedabad
+* **Year of Graduation:** July 2029
+* **Email:** `arunj.data1766@gmail.com`
+* **GitHub Profile:** [https://github.com/Arunpurohit1766](https://github.com/Arunpurohit1766)
+* **GitHub Repository:** [https://github.com/Arunpurohit1766/Ledgermind-AI](https://github.com/Arunpurohit1766/Ledgermind-AI)
+* **Live Streamlit Cloud Application:** [https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/](https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/)
