@@ -17,7 +17,7 @@
 In digital commerce and fintech ecosystems, financial data is fragmented across three disconnected ledgers:
 1. **Source 1: Internal Merchant Order DB** (Customer checkout amounts & payment instruments)
 2. **Source 2: Payment Gateway Feed / Razorpay** (Contractual MDR fees, 18% statutory GST & net payout calculations)
-3. **Source 3: Bank Realization Statements** (Actual cash credited with 12-digit UTR references)
+3. **Source 3: Bank Realization Statements** (Actual cash credited with UTR references)
 
 ### The Core Problem:
 Silent fee rate overcharges (e.g. charging 2.8% instead of the contracted 1.9%), tax line miscalculations (28% luxury GST instead of statutory 18%), gateway risk escrow holds, and uncredited UTRs silently drain **1.5% to 3.5% of total gross revenue**. Traditional finance teams only discover these discrepancies weeks later through manual spreadsheet auditing.

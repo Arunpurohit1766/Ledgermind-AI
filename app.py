@@ -236,7 +236,9 @@ FEATURE_COLS = [
 
 @st.cache_resource(show_spinner=False)
 def get_db_connection():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.execute('PRAGMA foreign_keys = ON;')
+    return conn
 
 @st.cache_resource(show_spinner=False)
 def load_ml_pipeline():
@@ -374,7 +376,7 @@ if nav == "0. 3-Way System Architecture & Data Funnel":
         <ol style="color: #CBD5E1; font-size: 0.88rem; line-height: 1.8;">
             <li><b>Source 1: Merchant Order DB ({total_orders:,} Records):</b> The customer checkout record with purchase amounts and payment instruments.</li>
             <li><b>Source 2: Payment Gateway Feed ({success_count:,} Records):</b> Razorpay's settlement deductions for contracted MDR fees, 18% GST, and risk escrow holds.</li>
-            <li><b>Source 3: Bank Clearing Statements ({settled_count:,} Records):</b> The acquiring bank ledger of cleared deposits matched with a 12-digit UTR reference.</li>
+            <li><b>Source 3: Bank Clearing Statements ({settled_count:,} Records):</b> The acquiring bank ledger of cleared deposits matched with a UTR reference.</li>
         </ol>
         <p style="color: #94A3B8; font-size: 0.9rem;">
             <b>Why It Fails Manually:</b> Gateways occasionally overcharge processing fees (e.g. charging 2.6% instead of 1.9%), miscalculate GST (28% instead of statutory 18%), or delay funds in escrow. LedgerMind AI automates 3-way synchronization, applies live Machine Learning anomaly risk scoring, and drafts double-entry balancing proposals.
@@ -497,8 +499,11 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
         # Unified Canonical 3-Way Clean Predicate
         is_clean = (
             (df_batch['settlement_status'] == 'SETTLED') & 
-            (df_batch['fee_variance'] <= 2.0) & 
-            (df_batch['tax_variance'] <= 1.0) & 
+            (df_batch['actual_fee_charged'].notnull()) & 
+            (df_batch['gst_charged'].notnull()) & 
+            (df_batch['net_settlement_amount'].notnull()) & 
+            (df_batch['fee_variance'].abs() <= 2.0) & 
+            (df_batch['tax_variance'].abs() <= 1.0) & 
             (df_batch['credit_amount'].notnull()) & 
             (df_batch['credit_amount'] > 0) & 
             (df_batch['utr_number'].notnull()) & 
@@ -517,9 +522,12 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
             df_exceptions['Exception Cause'] = [d['root_cause'] for d in diagnoses]
             df_exceptions['Discrepancy Category'] = [d['discrepancy_type'] for d in diagnoses]
             df_exceptions['Leakage Amount'] = [d['leakage_amount'] for d in diagnoses]
+            df_exceptions['Fee Variance Component'] = [d['fee_variance'] for d in diagnoses]
+            df_exceptions['Tax Variance Component'] = [d['tax_variance'] for d in diagnoses]
+            df_exceptions['Bank Variance Component'] = [d['bank_variance'] for d in diagnoses]
             df_exceptions['Dispute Claim Type'] = [d['claim_type'] for d in diagnoses]
             df_exceptions['Audit Evidence'] = [d['evidence'] for d in diagnoses]
-            total_leakage_inr = df_exceptions['Leakage Amount'].sum()
+            total_leakage_inr = round(float(df_exceptions['Leakage Amount'].sum()), 2)
         else:
             total_leakage_inr = 0.0
         
@@ -582,15 +590,15 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
             for i, (idx, row) in enumerate(df_exceptions.iterrows(), 1):
                 ord_id = row['order_id']
                 disc_type = row['Discrepancy Category']
-                tot_leak = row['Leakage Amount']
+                tot_leak = round(float(row['Leakage Amount']), 2)
                 ml_conf = float(row.get('ai_anomaly_risk') or 0.50)
                 
-                # Compound-aware Double-Entry Journal Mapping (Credits strictly sum to Debits)
-                f_var = max(0.0, float(row.get('fee_variance') or 0.0))
-                t_var = max(0.0, float(row.get('tax_variance') or 0.0))
-                b_var = max(0.0, float(row.get('bank_variance') or 0.0))
+                # Canonical exact-paisa component allocation
+                f_var = round(float(row.get('Fee Variance Component') or 0.0), 2)
+                t_var = round(float(row.get('Tax Variance Component') or 0.0), 2)
+                b_var = round(float(row.get('Bank Variance Component') or 0.0), 2)
                 
-                if disc_type == 'MISSING_GATEWAY_RECORD':
+                if disc_type == 'MISSING_GATEWAY_RECORD' or disc_type == 'INVALID_GATEWAY_FINANCIAL_DATA':
                     dr_entry = f"DR 1145: Unsettled Merchant Order Clearing (INR {tot_leak:,.2f})"
                     cr_entry = f"CR 4010: Sales Revenue Suspense (INR {tot_leak:,.2f})"
                 elif disc_type == 'SETTLEMENT_ON_HOLD':
@@ -599,16 +607,21 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
                 elif disc_type == 'UNREALIZED_BANK_CREDIT':
                     dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
                     cr_entry = f"CR 1090: Bank Realization Inflow Suspense (INR {tot_leak:,.2f})"
+                elif disc_type == 'FEE_UNDERCHARGE':
+                    dr_entry = f"DR 5120: Fee Expense Recovery Adjustment (INR {tot_leak:,.2f})"
+                    cr_entry = f"CR 1140: Gateway Settlement Payable (INR {tot_leak:,.2f})"
                 else:
                     dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
                     cr_parts = []
+                    # Allocate credits to match exact canonical components
+                    comp_sum = round(f_var + t_var + b_var, 2)
                     if f_var > 0:
                         cr_parts.append(f"CR 5120: Fee Expense Recovery (INR {f_var:,.2f})")
                     if t_var > 0:
                         cr_parts.append(f"CR 2210: GST Input Tax (INR {t_var:,.2f})")
                     if b_var > 0:
                         cr_parts.append(f"CR 1090: Bank Realization Inflow Suspense (INR {b_var:,.2f})")
-                    if not cr_parts:
+                    if not cr_parts or comp_sum == 0.0:
                         cr_parts.append(f"CR 5120: Fee Expense Recovery (INR {tot_leak:,.2f})")
                     cr_entry = " | ".join(cr_parts)
                     
@@ -660,12 +673,14 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
             
             try:
                 c_heal = conn.cursor()
+                # Clear previous session audit logs for idempotent regeneration
+                c_heal.execute("DELETE FROM audit_ledger WHERE order_id IN ({seq})".format(seq=','.join(['?']*len(db_audit_rows))), [r[0] for r in db_audit_rows])
                 c_heal.executemany(
                     "INSERT INTO audit_ledger (order_id, anomaly_type, leakage_amount, ai_confidence, root_cause_explanation, action_taken, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     db_audit_rows
                 )
                 conn.commit()
-                st.success(f"Resolution Workflows Generated in {t_heal_elapsed} ms. Audit ledger successfully persisted to SQLite.")
+                st.success(f"Resolution Workflows Generated in {t_heal_elapsed} ms. Audit ledger idempotently persisted to SQLite.")
             except Exception as e:
                 st.error(f"Audit Persistence Warning: Resolution generated in memory, but SQLite persistence failed: {str(e)}")
             
@@ -816,8 +831,11 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             # Unified Canonical 3-Way Clean Predicate
             is_3way_clean = (
                 (df_joined['settlement_status'] == 'SETTLED') & 
-                (df_joined['fee_variance'] <= 2.0) & 
-                (df_joined['tax_variance'] <= 1.0) & 
+                (df_joined['actual_fee_charged'].notnull()) & 
+                (df_joined['gst_charged'].notnull()) & 
+                (df_joined['net_settlement_amount'].notnull()) & 
+                (df_joined['fee_variance'].abs() <= 2.0) & 
+                (df_joined['tax_variance'].abs() <= 1.0) & 
                 (df_joined['credit_amount'].notnull()) & 
                 (df_joined['credit_amount'] > 0) & 
                 (df_joined['utr_number'].notnull()) & 
@@ -922,7 +940,7 @@ elif nav == "4. Machine Learning Benchmark & Zero-Leakage Pipeline":
         st.markdown("<hr style='border-color: #1C273E;'/>", unsafe_allow_html=True)
         st.markdown("""
         #### Technical Machine Learning Specification & Dual-Layer Architecture:
-        * **Reconciliation Truth vs. Predictive Prioritization:** The deterministic reconciliation engine establishes ground-truth financial exceptions based on contractual MDR rates, statutory 18% GST rules, and bank realization deposits. The ML model acts as an independent risk scorer that prioritizes transaction queues using checkout signals available before downstream settlement feeds arrive.
+        * **Reconciliation Truth vs. Predictive Prioritization:** The deterministic reconciliation engine establishes ground-truth financial exceptions based on contractual MDR rates, configured 18% GST benchmark rules, and bank realization deposits. The ML model acts as an independent risk scorer that prioritizes transaction queues using checkout signals available before downstream settlement feeds arrive.
         * **Active Production Model Selection Rationale:** In real-time financial exception screening, models must balance high minority recall with inference throughput and precision. While Gradient Boosting achieved the highest PR-AUC (0.3590) and Logistic Regression achieved the highest raw linear recall (73.0%), **XGBoost (0.8059 ROC-AUC / 0.3459 PR-AUC / 70.2% Recall)** was selected as the production screening model for its non-linear interaction modeling capability and strong recall at the chosen operating threshold.
         * **Zero Feature Leakage Architecture:** Direct rule-derived mathematical features (such as `fee_variance` or `actual_fee_charged`) are strictly excluded from the training feature set. Models are trained purely on operational input signals to ensure genuine generalization.
         * **Preprocessing Architecture:** Scikit-learn `Pipeline` utilizing `ColumnTransformer` with `StandardScaler` for continuous dimensions and `OneHotEncoder(handle_unknown='ignore')` for discrete instruments.

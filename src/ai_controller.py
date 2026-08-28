@@ -5,8 +5,18 @@ import numpy as np
 
 def diagnose_discrepancy(row):
     """
-    Single Source of Truth Diagnostic Engine for Multi-Source Financial Reconciliation.
+    Canonical Single Source of Truth Diagnostic Engine for Multi-Source Financial Reconciliation.
     Evaluates transactional parameters across Orders, Gateway Settlements, and Bank Statements.
+    Explicitly distinguishes between:
+    - MISSING_GATEWAY_RECORD
+    - INVALID_GATEWAY_FINANCIAL_DATA (Null / malformed values)
+    - SETTLEMENT_ON_HOLD
+    - FEE_OVERCHARGE
+    - FEE_UNDERCHARGE (Favorable variance)
+    - GST_MISMATCH
+    - UNREALIZED_BANK_CREDIT
+    - BANK_AMOUNT_MISMATCH
+    - RECONCILED_CLEAN
     """
     amt = float(row.get('order_amount', 0.0) or 0.0)
     contract_rate = row.get('contract_mdr_rate')
@@ -28,20 +38,36 @@ def diagnose_discrepancy(row):
             'status': 'DISCREPANCY_DETECTED',
             'discrepancy_type': 'MISSING_GATEWAY_RECORD',
             'leakage_amount': round(amt, 2),
+            'fee_variance': 0.0,
+            'tax_variance': 0.0,
+            'bank_variance': 0.0,
             'root_cause': 'Missing Gateway Record: Order confirmed in Merchant DB but was never processed or reported by Payment Gateway.',
             'recommended_action': 'INVESTIGATE_UNPROCESSED_ORDER',
             'claim_type': 'UNPROCESSED_MERCHANT_TRANSACTION',
             'evidence': f"Order {row.get('order_id')} (INR {amt:,.2f}) exists in Merchant Orders DB with no matching gateway settlement record."
         }
         
-    if contract_rate is None or pd.isna(contract_rate):
-        contract_rate = 0.015
-    else:
-        contract_rate = float(contract_rate)
+    # -------------------------------------------------------------
+    # State 2: Invalid / Null Gateway Financial Data
+    # -------------------------------------------------------------
+    if pd.isna(actual_fee) or pd.isna(gst_charged) or pd.isna(net_settlement) or pd.isna(contract_rate):
+        return {
+            'status': 'DISCREPANCY_DETECTED',
+            'discrepancy_type': 'INVALID_GATEWAY_FINANCIAL_DATA',
+            'leakage_amount': round(amt, 2),
+            'fee_variance': 0.0,
+            'tax_variance': 0.0,
+            'bank_variance': 0.0,
+            'root_cause': 'Malformed Gateway Data: Missing actual fee, GST, or net settlement figures in gateway settlement feed.',
+            'recommended_action': 'REJECT_MALFORMED_SETTLEMENT_RECORD',
+            'claim_type': 'INVALID_SETTLEMENT_DATA',
+            'evidence': f"Order {row.get('order_id')} contains null/unparsed financial breakdown values in gateway record."
+        }
         
-    actual_fee = float(actual_fee or 0.0)
-    gst_charged = float(gst_charged or 0.0)
-    net_settlement = float(net_settlement or 0.0)
+    contract_rate = float(contract_rate)
+    actual_fee = float(actual_fee)
+    gst_charged = float(gst_charged)
+    net_settlement = float(net_settlement)
     expected_fee = round(amt * contract_rate, 2)
     expected_gst = round(actual_fee * 0.18, 2)
     
@@ -52,8 +78,12 @@ def diagnose_discrepancy(row):
     claim_type = "FINANCIAL_DISCREPANCY_CLAIM"
     evidence_parts = []
     
+    f_var = 0.0
+    t_var = 0.0
+    b_var = 0.0
+    
     # -------------------------------------------------------------
-    # State 2: Gateway Settlement On Hold (Escrow freeze)
+    # State 3: Gateway Settlement On Hold (Escrow freeze)
     # -------------------------------------------------------------
     if settle_status == 'ON_HOLD':
         reasons.append("Gateway Settlement On Hold: Payout delayed by Gateway risk/compliance engines or chargeback reserve hold.")
@@ -64,34 +94,51 @@ def diagnose_discrepancy(row):
         evidence_parts.append(f"Net settlement INR {net_settlement:,.2f} marked ON_HOLD by gateway despite successful customer charge.")
 
     # -------------------------------------------------------------
-    # State 3: MDR Fee Overcharge
+    # State 4: MDR Fee Overcharge / Undercharge
     # -------------------------------------------------------------
     fee_diff = round(actual_fee - expected_fee, 2)
     if fee_diff > 2.0:
         overcharge_pct = round(((actual_fee / (amt + 1e-5)) - contract_rate) * 100, 2)
         reasons.append(f"MDR Rate Overcharge: Charged {round((actual_fee/(amt+1e-5))*100, 2)}% vs contracted {round(contract_rate*100, 2)}% (Excess Fee: INR {fee_diff:,.2f}).")
         leakage += fee_diff
+        f_var = fee_diff
         if discrepancy_type == "UNKNOWN_DISCREPANCY":
             discrepancy_type = "FEE_OVERCHARGE"
             action = "AUTO_DRAFT_MDR_RECOVERY_CLAIM"
             claim_type = "MDR_RATE_OVERCHARGE"
         evidence_parts.append(f"Actual fee INR {actual_fee:,.2f} exceeds contract MDR {contract_rate*100:.2f}% (INR {expected_fee:,.2f}) by INR {fee_diff:,.2f}.")
+    elif fee_diff < -2.0:
+        undercharge_amt = abs(fee_diff)
+        reasons.append(f"MDR Fee Undercharge (Favorable): Billed INR {actual_fee:,.2f} vs contracted INR {expected_fee:,.2f} (Undercharged by INR {undercharge_amt:,.2f}).")
+        if discrepancy_type == "UNKNOWN_DISCREPANCY":
+            discrepancy_type = "FEE_UNDERCHARGE"
+            action = "LOG_FAVORABLE_VARIANCE"
+            claim_type = "FAVORABLE_MDR_VARIANCE"
+        evidence_parts.append(f"Actual fee INR {actual_fee:,.2f} is lower than contracted MDR {contract_rate*100:.2f}% by INR {undercharge_amt:,.2f}.")
 
     # -------------------------------------------------------------
-    # State 4: GST Rate Miscalculation
+    # State 5: GST Rate Miscalculation (Billed 28% vs configured 18% benchmark)
     # -------------------------------------------------------------
     gst_diff = round(gst_charged - expected_gst, 2)
     if gst_diff > 1.0:
-        reasons.append(f"GST Miscalculation: Billed INR {gst_charged:,.2f} vs standard 18% GST of INR {expected_gst:,.2f} (Overcharge: INR {gst_diff:,.2f}).")
+        reasons.append(f"GST Miscalculation: Billed INR {gst_charged:,.2f} vs configured 18% GST benchmark of INR {expected_gst:,.2f} (Overcharge: INR {gst_diff:,.2f}).")
         leakage += gst_diff
+        t_var = gst_diff
         if discrepancy_type == "UNKNOWN_DISCREPANCY":
             discrepancy_type = "GST_MISMATCH"
             action = "ADJUST_TAX_LEDGER_ENTRY"
             claim_type = "GST_TAX_ASSESSMENT_ERROR"
-        evidence_parts.append(f"Billed GST INR {gst_charged:,.2f} vs statutory 18% GST INR {expected_gst:,.2f} on fee INR {actual_fee:,.2f}.")
+        evidence_parts.append(f"Billed GST INR {gst_charged:,.2f} vs configured 18% GST benchmark INR {expected_gst:,.2f} on fee INR {actual_fee:,.2f}.")
+    elif gst_diff < -1.0:
+        tax_undercharge = abs(gst_diff)
+        reasons.append(f"GST Undercharge (Favorable): Billed INR {gst_charged:,.2f} vs benchmark INR {expected_gst:,.2f}.")
+        if discrepancy_type == "UNKNOWN_DISCREPANCY":
+            discrepancy_type = "GST_MISMATCH"
+            action = "LOG_FAVORABLE_TAX_VARIANCE"
+            claim_type = "FAVORABLE_TAX_VARIANCE"
 
     # -------------------------------------------------------------
-    # State 5: Missing or Non-Positive Bank Realization Record
+    # State 6: Missing or Non-Positive Bank Realization Record
     # -------------------------------------------------------------
     if settle_status == 'SETTLED':
         is_bank_missing = (
@@ -111,13 +158,14 @@ def diagnose_discrepancy(row):
             evidence_parts.append(f"Gateway marked SETTLED for INR {net_settlement:,.2f} but invalid/zero/negative bank credit (INR {float(bank_credit or 0):,.2f}) or missing UTR was received.")
             
         # -------------------------------------------------------------
-        # State 6: Bank Realization Shortfall Mismatch
+        # State 7: Bank Realization Shortfall Mismatch
         # -------------------------------------------------------------
         else:
             bank_diff = round(net_settlement - float(bank_credit), 2)
             if abs(bank_diff) > 2.0:
                 reasons.append(f"Bank Credit Mismatch: Expected INR {net_settlement:,.2f} but bank realized INR {float(bank_credit):,.2f} (Shortfall: INR {bank_diff:,.2f}).")
                 leakage += max(0.0, bank_diff)
+                b_var = max(0.0, bank_diff)
                 if discrepancy_type == "UNKNOWN_DISCREPANCY":
                     discrepancy_type = "BANK_AMOUNT_MISMATCH"
                     action = "INITIATE_BANK_RECONCILIATION_QUERY"
@@ -129,6 +177,9 @@ def diagnose_discrepancy(row):
             'status': 'RECONCILED_CLEAN',
             'discrepancy_type': 'RECONCILED_CLEAN',
             'leakage_amount': 0.0,
+            'fee_variance': 0.0,
+            'tax_variance': 0.0,
+            'bank_variance': 0.0,
             'root_cause': 'All reconciliation variances are within configured tolerances and the settlement has a valid bank realization.',
             'recommended_action': 'MARK_RECONCILED',
             'claim_type': 'NONE',
@@ -139,6 +190,9 @@ def diagnose_discrepancy(row):
         'status': 'DISCREPANCY_DETECTED',
         'discrepancy_type': discrepancy_type,
         'leakage_amount': round(leakage, 2),
+        'fee_variance': round(f_var, 2),
+        'tax_variance': round(t_var, 2),
+        'bank_variance': round(b_var, 2),
         'root_cause': " | ".join(reasons),
         'recommended_action': action,
         'claim_type': claim_type,
@@ -151,6 +205,7 @@ def generate_dispute_packet(order_id, db_path):
     Uses parameterized SQL to guarantee injection safety.
     """
     conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA foreign_keys = ON;")
     query = """
     SELECT 
         o.order_id, o.customer_id, o.order_amount, o.order_timestamp, o.payment_method, o.merchant_category,
