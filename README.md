@@ -65,7 +65,7 @@ The relational database models the real-world drop-offs, gateway holds, and bank
 
 ```
 +---------------------------------------------------------------------------------------------------+
-| 1. MULTI-SOURCE DATA INGESTION & RELATIONAL DATABASE LAYER (SQLite Relational Engine v3.42)       |
+| 1. MULTI-SOURCE DATA INGESTION & RELATIONAL DATABASE LAYER (SQLite Relational Engine)       |
 |    - orders (50,000 transaction records with amounts, timestamps, payment methods, categories)    |
 |    - gateway_settlements (contract MDR rates, actual fees, 18% GST tax lines, settlement statuses) |
 |    - bank_statements (UTR numbers, bank clearing timestamps, realized credit deposits)            |

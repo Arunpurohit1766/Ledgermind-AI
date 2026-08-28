@@ -156,7 +156,7 @@ def generate_dispute_packet(order_id, db_path):
     Generates a formal, audit-ready Financial Dispute & Resolution Notice.
     """
     conn = sqlite3.connect(db_path)
-    query = f"""
+    query = """
     SELECT 
         o.order_id, o.customer_id, o.order_amount, o.order_timestamp, o.payment_method, o.merchant_category,
         g.settlement_id, g.gateway_txn_id, g.contract_mdr_rate, g.actual_fee_charged, g.gst_charged, g.net_settlement_amount, g.settlement_status,
@@ -164,9 +164,9 @@ def generate_dispute_packet(order_id, db_path):
     FROM orders o
     LEFT JOIN gateway_settlements g ON o.order_id = g.order_id
     LEFT JOIN bank_statements b ON g.gateway_txn_id = b.gateway_txn_id
-    WHERE o.order_id = '{order_id}';
+    WHERE o.order_id = ?;
     """
-    df = pd.read_sql_query(query, conn)
+    df = pd.read_sql_query(query, conn, params=(order_id,))
     conn.close()
     
     if df.empty:

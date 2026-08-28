@@ -322,7 +322,7 @@ st.markdown("""
         </div>
     </div>
     <div class="header-status-badge">
-        <div class="meta-tag">Engine: SQLite Relational v3.42</div>
+        <div class="meta-tag">Engine: SQLite Relational Engine</div>
         <div class="meta-tag">Active ML: XGBoost (8-Feature Pipeline)</div>
         <div class="status-indicator">
             <div class="status-dot"></div>
@@ -396,7 +396,7 @@ if nav == "0. 3-Way System Architecture & Data Funnel":
         <ol style="color: #CBD5E1; font-size: 0.88rem; line-height: 1.8;">
             <li><b>Source 1: Merchant Order DB (50,000 Records):</b> The customer checkout record with purchase amounts and payment instruments.</li>
             <li><b>Source 2: Payment Gateway Feed (48,515 Records):</b> Razorpay's settlement deductions for contracted MDR fees, 18% GST, and risk escrow holds.</li>
-            <li><b>Source 3: Bank Clearing Statements (48,008 Records):</b> The acquiring bank (HDFC/ICICI) ledger of cleared deposits matched with a 12-digit UTR reference.</li>
+            <li><b>Source 3: Bank Clearing Statements (47,239 Records):</b> The acquiring bank (HDFC/ICICI) ledger of cleared deposits matched with a 12-digit UTR reference.</li>
         </ol>
         <p style="color: #94A3B8; font-size: 0.9rem;">
             <b>Why It Fails Manually:</b> Gateways occasionally overcharge processing fees (e.g. charging 2.6% instead of 1.9%), miscalculate GST (28% instead of statutory 18%), or delay funds in escrow. LedgerMind AI automates 3-way synchronization, applies live Machine Learning anomaly detection, and proposes double-entry balancing workflows.
@@ -418,7 +418,7 @@ if nav == "0. 3-Way System Architecture & Data Funnel":
            +---> [   468 ON_HOLD ] (Gateway risk engine escrow hold)
            |
            v
-      48,008 SETTLED Transactions (Cleared in Bank Account with 12-Digit UTR)
+      47,239 SETTLED Transactions (Cleared in Bank Account with 12-Digit UTR)
     ```
     """)
     
@@ -494,7 +494,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
                 round(g.gst_charged - (g.actual_fee_charged * 0.18), 2) as tax_variance,
                 round(g.net_settlement_amount - COALESCE(b.credit_amount, 0), 2) as bank_variance
             FROM orders o
-            JOIN gateway_settlements g ON o.order_id = g.order_id
+            LEFT JOIN gateway_settlements g ON o.order_id = g.order_id
             LEFT JOIN bank_statements b ON g.gateway_txn_id = b.gateway_txn_id
             WHERE o.order_status = 'SUCCESS'
             LIMIT {batch_size};
@@ -521,7 +521,10 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
             (df_batch['fee_variance'] <= 2.0) & 
             (df_batch['tax_variance'] <= 1.0) & 
             (df_batch['credit_amount'].notnull()) & 
-            (abs(df_batch['bank_variance']) <= 2.0)
+            (df_batch['credit_amount'] > 0) & 
+            (df_batch['utr_number'].notnull()) & 
+            (~df_batch['utr_number'].astype(str).str.strip().isin(['', 'nan', 'None', 'N/A'])) & 
+            (df_batch['bank_variance'].abs() <= 2.0)
         )
         matched_count = int(is_clean.sum())
         exception_count = int((~is_clean).sum())
@@ -608,32 +611,28 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
                 b_var = max(0.0, float(row.get('bank_variance') or 0.0))
                 net_settle = float(row.get('net_settlement_amount') or 0.0)
                 
-                if disc_type == 'SETTLEMENT_ON_HOLD':
+                # Compound-aware GAAP Journal Mapping: credits strictly match underlying variances
+                if disc_type == 'MISSING_GATEWAY_RECORD':
+                    dr_entry = f"DR 1145: Unsettled Merchant Order Clearing (INR {tot_leak:,.2f})"
+                    cr_entry = f"CR 4010: Sales Revenue Suspense (INR {tot_leak:,.2f})"
+                elif disc_type == 'SETTLEMENT_ON_HOLD':
                     dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
                     cr_entry = f"CR 2050: Gateway Escrow Suspense Clearing (INR {tot_leak:,.2f})"
                 elif disc_type == 'UNREALIZED_BANK_CREDIT':
                     dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
                     cr_entry = f"CR 1090: Bank Realization Inflow Suspense (INR {tot_leak:,.2f})"
-                elif disc_type == 'BANK_AMOUNT_MISMATCH':
-                    dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
-                    cr_entry = f"CR 1090: Bank Realization Inflow Suspense (INR {tot_leak:,.2f})"
-                elif disc_type == 'MISSING_GATEWAY_RECORD':
-                    dr_entry = f"DR 1145: Unsettled Merchant Order Clearing (INR {tot_leak:,.2f})"
-                    cr_entry = f"CR 4010: Sales Revenue Suspense (INR {tot_leak:,.2f})"
-                elif disc_type == 'GST_MISMATCH':
-                    dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
-                    cr_entry = f"CR 2210: GST Input Tax Credit (INR {tot_leak:,.2f})"
-                else: # FEE_OVERCHARGE or Compound Discrepancies
+                else:
+                    # Handles FEE_OVERCHARGE, GST_MISMATCH, BANK_AMOUNT_MISMATCH, and any Compound combinations
                     dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
                     cr_parts = []
                     if f_var > 0:
-                        cr_parts.append(f"CR 5120: Fee Expense (INR {f_var:,.2f})")
+                        cr_parts.append(f"CR 5120: Fee Expense Recovery (INR {f_var:,.2f})")
                     if t_var > 0:
                         cr_parts.append(f"CR 2210: GST Input Tax (INR {t_var:,.2f})")
                     if b_var > 0:
-                        cr_parts.append(f"CR 1090: Bank Suspense (INR {b_var:,.2f})")
+                        cr_parts.append(f"CR 1090: Bank Realization Inflow Suspense (INR {b_var:,.2f})")
                     if not cr_parts:
-                        cr_parts.append(f"CR 5120: Fee Expense (INR {tot_leak:,.2f})")
+                        cr_parts.append(f"CR 5120: Fee Expense Recovery (INR {tot_leak:,.2f})")
                     cr_entry = " | ".join(cr_parts)
                     
                 action_code = f"PROPOSED_JOURNAL | {dr_entry} // {cr_entry}"
@@ -829,7 +828,10 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
                 (df_joined['fee_variance'] <= 2.0) & 
                 (df_joined['tax_variance'] <= 1.0) & 
                 (df_joined['credit_amount'].notnull()) & 
-                (abs(df_joined['bank_variance']) <= 2.0)
+                (df_joined['credit_amount'] > 0) & 
+                (df_joined['utr_number'].notnull()) & 
+                (~df_joined['utr_number'].astype(str).str.strip().isin(['', 'nan', 'None', 'N/A'])) & 
+                (df_joined['bank_variance'].abs() <= 2.0)
             )
             matched_3way = int(is_3way_clean.sum())
             exceptions_3way = int((~is_3way_clean).sum())
@@ -895,9 +897,9 @@ elif nav == "3. Financial Stress & MDR Scenario Simulator":
     st.markdown("#### Scenario Simulation Outcomes")
     
     sc1, sc2, sc3 = st.columns(3)
-    sc1.metric("Simulated Monthly Fees", f"INR {new_cc_fees:,.2f}", f"Delta: INR {fee_impact_variance:+,.2f}", delta_color="inverse" if fee_impact_variance > 0 else "normal")
+    sc1.metric("Modeled Credit Card Processing Fees", f"INR {new_cc_fees:,.2f}", f"Delta: INR {fee_impact_variance:+,.2f}", delta_color="inverse" if fee_impact_variance > 0 else "normal")
     sc2.metric("Projected Escrow Capital Held", f"INR {simulated_escrow_risk:,.2f}", f"{sim_escrow_hold}% of Volume", delta_color="inverse")
-    sc3.metric("Projected Net Cash Position", f"INR {(total_vol - new_cc_fees - simulated_escrow_risk):,.2f}")
+    sc3.metric("Modeled Cash After Simulated Fees & Holds", f"INR {(total_vol - new_cc_fees - simulated_escrow_risk):,.2f}")
     
     st.markdown("#### Sensitivity Analysis Summary")
     df_sens = pd.DataFrame({
@@ -923,7 +925,7 @@ elif nav == "4. Machine Learning Benchmark & Zero-Leakage Pipeline":
         st.markdown("<hr style='border-color: #1C273E;'/>", unsafe_allow_html=True)
         st.markdown("""
         #### Technical Machine Learning Specification & Production Selection:
-        * **Active Production Model Selection Rationale:** In real-time financial exception screening, models must balance high minority recall with inference throughput and precision. While Gradient Boosting achieved the highest PR-AUC (0.3590) and Logistic Regression achieved the highest raw linear recall (73.0%), **XGBoost (0.8059 ROC-AUC / 0.3459 PR-AUC / 70.2% Recall)** was selected as the active production engine due to its superior non-linear decision boundary and sub-millisecond compiled scoring latency.
+        * **Active Production Model Selection Rationale:** In real-time financial exception screening, models must balance high minority recall with inference throughput and precision. While Gradient Boosting achieved the highest PR-AUC (0.3590) and Logistic Regression achieved the highest raw linear recall (73.0%), **XGBoost (0.8059 ROC-AUC / 0.3459 PR-AUC / 70.2% Recall)** was selected as the production screening model for its non-linear interaction modeling capability and strong recall at the chosen operating threshold.
         * **Surrogate Generalization:** Operates strictly on 8 standard checkout features (`order_amount`, `log_amount`, `payment_method`, `merchant_category`, `contract_mdr_rate`, `order_hour`, `is_high_value`, `category_risk_prior`) to flag anomaly risk even when downstream fee breakdown fields are unparsed or partially delayed.
         * **Zero Feature Leakage:** Ground-truth fee columns (`actual_fee_charged`, `gst_charged`, `fee_variance`) are strictly excluded during training.
         * **Preprocessing Architecture:** Scikit-learn `Pipeline` using `ColumnTransformer` (`StandardScaler` + `OneHotEncoder(handle_unknown='ignore')`).
