@@ -7,24 +7,12 @@ def diagnose_discrepancy(row):
     """
     Canonical Single Source of Truth Diagnostic Engine for Multi-Source Financial Reconciliation.
     Evaluates transactional parameters across Orders, Gateway Settlements, and Bank Statements.
-    Explicitly distinguishes between:
-    - INVALID_FINANCIAL_DATA (Null, non-numeric, negative, or infinite amounts)
-    - MISSING_GATEWAY_RECORD
-    - INVALID_GATEWAY_FINANCIAL_DATA
-    - INVALID_SETTLEMENT_STATUS
-    - SETTLEMENT_ON_HOLD
-    - FEE_OVERCHARGE
-    - FEE_UNDERCHARGE (Favorable variance)
-    - GST_MISMATCH
-    - UNREALIZED_BANK_CREDIT (Missing, zero, negative credit or uncleared status)
-    - BANK_AMOUNT_MISMATCH (Shortfall or favorable over-credit)
-    - RECONCILED_CLEAN
+    Guarantees strict pre-calculation financial validation and exact-paisa component allocation.
     """
+    # -------------------------------------------------------------
+    # 1. Strict Validation Boundary: Order Amount
+    # -------------------------------------------------------------
     raw_amt = row.get('order_amount')
-    
-    # -------------------------------------------------------------
-    # State 1: Validate Order Amount
-    # -------------------------------------------------------------
     if raw_amt is None or pd.isna(raw_amt):
         return {
             'status': 'DISCREPANCY_DETECTED',
@@ -57,22 +45,14 @@ def diagnose_discrepancy(row):
             'evidence': f"Order {row.get('order_id', 'UNKNOWN')} amount '{raw_amt}' failed numeric validation."
         }
         
-    contract_rate = row.get('contract_mdr_rate')
-    actual_fee = row.get('actual_fee_charged')
-    gst_charged = row.get('gst_charged')
-    net_settlement = row.get('net_settlement_amount')
     raw_settle_status = row.get('settlement_status')
-    
-    bank_credit = row.get('credit_amount')
-    if bank_credit is None or (isinstance(bank_credit, float) and np.isnan(bank_credit)):
-        bank_credit = row.get('bank_credit_amount')
-    utr_number = row.get('utr_number')
-    clearing_status = str(row.get('clearing_status') or 'CLEARED').strip().upper()
+    gateway_txn_id = row.get('gateway_txn_id')
     
     # -------------------------------------------------------------
-    # State 2: Missing Gateway Settlement Record
+    # 2. State: Missing Gateway Settlement Record
     # -------------------------------------------------------------
-    if pd.isna(raw_settle_status) or raw_settle_status is None or pd.isna(row.get('gateway_txn_id')) or str(row.get('gateway_txn_id')).strip() in ['', 'nan', 'None', 'N/A']:
+    if (pd.isna(raw_settle_status) or raw_settle_status is None or 
+        pd.isna(gateway_txn_id) or str(gateway_txn_id).strip() in ['', 'nan', 'None', 'N/A']):
         return {
             'status': 'DISCREPANCY_DETECTED',
             'discrepancy_type': 'MISSING_GATEWAY_RECORD',
@@ -87,10 +67,6 @@ def diagnose_discrepancy(row):
         }
         
     settle_status = str(raw_settle_status).strip().upper()
-    
-    # -------------------------------------------------------------
-    # State 3: Validate Settlement Status Categorical Value
-    # -------------------------------------------------------------
     if settle_status not in ['SETTLED', 'ON_HOLD']:
         return {
             'status': 'DISCREPANCY_DETECTED',
@@ -106,77 +82,91 @@ def diagnose_discrepancy(row):
         }
         
     # -------------------------------------------------------------
-    # State 4: Validate Presence & Non-Negativity of Gateway Financial Numbers
+    # 3. Strict Pre-Calculation Validation of Gateway Financial Numbers
     # -------------------------------------------------------------
-    if pd.isna(actual_fee) or pd.isna(gst_charged) or pd.isna(net_settlement) or pd.isna(contract_rate):
-        return {
-            'status': 'DISCREPANCY_DETECTED',
-            'discrepancy_type': 'INVALID_GATEWAY_FINANCIAL_DATA',
-            'leakage_amount': round(amt, 2),
-            'fee_variance': 0.0,
-            'tax_variance': 0.0,
-            'bank_variance': 0.0,
-            'root_cause': 'Malformed Gateway Data: Missing actual fee, GST, or net settlement figures in gateway settlement feed.',
-            'recommended_action': 'REJECT_MALFORMED_SETTLEMENT_RECORD',
-            'claim_type': 'INVALID_SETTLEMENT_DATA',
-            'evidence': f"Order {row.get('order_id')} contains null/unparsed financial breakdown values in gateway record."
-        }
-        
-    try:
-        contract_rate = float(contract_rate)
-        actual_fee = float(actual_fee)
-        gst_charged = float(gst_charged)
-        net_settlement = float(net_settlement)
-        if any(v < 0 or np.isnan(v) or np.isinf(v) for v in [contract_rate, actual_fee, gst_charged, net_settlement]):
-            raise ValueError()
-    except (ValueError, TypeError):
-        return {
-            'status': 'DISCREPANCY_DETECTED',
-            'discrepancy_type': 'INVALID_GATEWAY_FINANCIAL_DATA',
-            'leakage_amount': round(amt, 2),
-            'fee_variance': 0.0,
-            'tax_variance': 0.0,
-            'bank_variance': 0.0,
-            'root_cause': 'Malformed Gateway Data: Negative or infinite financial figures in gateway record.',
-            'recommended_action': 'REJECT_MALFORMED_SETTLEMENT_RECORD',
-            'claim_type': 'INVALID_SETTLEMENT_DATA',
-            'evidence': f"Order {row.get('order_id')} has negative or invalid fee/tax/settlement numbers."
-        }
-        
+    contract_rate_raw = row.get('contract_mdr_rate')
+    actual_fee_raw = row.get('actual_fee_charged')
+    gst_charged_raw = row.get('gst_charged')
+    net_settlement_raw = row.get('net_settlement_amount')
+    
+    for field_name, field_val in [
+        ('contract_mdr_rate', contract_rate_raw),
+        ('actual_fee_charged', actual_fee_raw),
+        ('gst_charged', gst_charged_raw),
+        ('net_settlement_amount', net_settlement_raw)
+    ]:
+        if field_val is None or pd.isna(field_val):
+            return {
+                'status': 'DISCREPANCY_DETECTED',
+                'discrepancy_type': 'INVALID_GATEWAY_FINANCIAL_DATA',
+                'leakage_amount': round(amt, 2),
+                'fee_variance': 0.0,
+                'tax_variance': 0.0,
+                'bank_variance': 0.0,
+                'root_cause': f"Malformed Gateway Data: Required field '{field_name}' is missing or null.",
+                'recommended_action': 'REJECT_MALFORMED_SETTLEMENT_RECORD',
+                'claim_type': 'INVALID_SETTLEMENT_DATA',
+                'evidence': f"Order {row.get('order_id')} has null '{field_name}' in gateway feed."
+            }
+        try:
+            val_f = float(field_val)
+            if np.isnan(val_f) or np.isinf(val_f) or val_f < 0:
+                raise ValueError()
+        except (ValueError, TypeError):
+            return {
+                'status': 'DISCREPANCY_DETECTED',
+                'discrepancy_type': 'INVALID_GATEWAY_FINANCIAL_DATA',
+                'leakage_amount': round(amt, 2),
+                'fee_variance': 0.0,
+                'tax_variance': 0.0,
+                'bank_variance': 0.0,
+                'root_cause': f"Malformed Gateway Data: Field '{field_name}' ({field_val}) is negative, non-numeric, or infinite.",
+                'recommended_action': 'REJECT_MALFORMED_SETTLEMENT_RECORD',
+                'claim_type': 'INVALID_SETTLEMENT_DATA',
+                'evidence': f"Order {row.get('order_id')} contains invalid numeric value '{field_val}' for '{field_name}'."
+            }
+
+    contract_rate = float(contract_rate_raw)
+    actual_fee = float(actual_fee_raw)
+    gst_charged = float(gst_charged_raw)
+    net_settlement = float(net_settlement_raw)
     expected_fee = round(amt * contract_rate, 2)
     expected_gst = round(actual_fee * 0.18, 2)
     
+    bank_credit = row.get('credit_amount')
+    if bank_credit is None or (isinstance(bank_credit, float) and np.isnan(bank_credit)):
+        bank_credit = row.get('bank_credit_amount')
+    utr_number = row.get('utr_number')
+    clearing_status = str(row.get('clearing_status') or 'CLEARED').strip().upper()
+    
     reasons = []
-    leakage = 0.0
     discrepancy_type = "UNKNOWN_DISCREPANCY"
     action = "INVESTIGATE_EXCEPTION"
     claim_type = "FINANCIAL_DISCREPANCY_CLAIM"
     evidence_parts = []
     
-    f_var = 0.0
-    t_var = 0.0
-    b_var = 0.0
+    f_leak = 0.0
+    t_leak = 0.0
+    b_leak = 0.0
     
     # -------------------------------------------------------------
-    # State 5: Gateway Settlement On Hold (Escrow freeze)
+    # 4. State: Gateway Settlement On Hold
     # -------------------------------------------------------------
     if settle_status == 'ON_HOLD':
         reasons.append("Gateway Settlement On Hold: Payout delayed by Gateway risk/compliance engines or chargeback reserve hold.")
-        leakage += net_settlement
         discrepancy_type = "SETTLEMENT_ON_HOLD"
         action = "RAISE_GATEWAY_ESCROW_RELEASE_TICKET"
         claim_type = "GATEWAY_ESCROW_RELEASE_DEMAND"
         evidence_parts.append(f"Net settlement INR {net_settlement:,.2f} marked ON_HOLD by gateway despite successful customer charge.")
 
     # -------------------------------------------------------------
-    # State 6: MDR Fee Overcharge / Undercharge
+    # 5. State: MDR Fee Overcharge / Undercharge
     # -------------------------------------------------------------
     fee_diff = round(actual_fee - expected_fee, 2)
     if fee_diff > 2.0:
         overcharge_pct = round(((actual_fee / (amt + 1e-5)) - contract_rate) * 100, 2)
         reasons.append(f"MDR Rate Overcharge: Charged {round((actual_fee/(amt+1e-5))*100, 2)}% vs contracted {round(contract_rate*100, 2)}% (Excess Fee: INR {fee_diff:,.2f}).")
-        leakage += fee_diff
-        f_var = fee_diff
+        f_leak = fee_diff
         if discrepancy_type == "UNKNOWN_DISCREPANCY":
             discrepancy_type = "FEE_OVERCHARGE"
             action = "AUTO_DRAFT_MDR_RECOVERY_CLAIM"
@@ -192,13 +182,12 @@ def diagnose_discrepancy(row):
         evidence_parts.append(f"Actual fee INR {actual_fee:,.2f} is lower than contracted MDR {contract_rate*100:.2f}% by INR {undercharge_amt:,.2f}.")
 
     # -------------------------------------------------------------
-    # State 7: GST Rate Miscalculation (Billed 28% vs configured 18% benchmark)
+    # 6. State: GST Rate Miscalculation
     # -------------------------------------------------------------
     gst_diff = round(gst_charged - expected_gst, 2)
     if gst_diff > 1.0:
         reasons.append(f"GST Miscalculation: Billed INR {gst_charged:,.2f} vs configured 18% GST benchmark of INR {expected_gst:,.2f} (Overcharge: INR {gst_diff:,.2f}).")
-        leakage += gst_diff
-        t_var = gst_diff
+        t_leak = gst_diff
         if discrepancy_type == "UNKNOWN_DISCREPANCY":
             discrepancy_type = "GST_MISMATCH"
             action = "ADJUST_TAX_LEDGER_ENTRY"
@@ -213,7 +202,7 @@ def diagnose_discrepancy(row):
             claim_type = "FAVORABLE_TAX_VARIANCE"
 
     # -------------------------------------------------------------
-    # State 8: Missing, Non-Positive, or Uncleared Bank Realization Record
+    # 7. State: Missing, Non-Positive, or Uncleared Bank Realization Record
     # -------------------------------------------------------------
     if settle_status == 'SETTLED':
         is_bank_missing = (
@@ -226,7 +215,6 @@ def diagnose_discrepancy(row):
         )
         if is_bank_missing:
             reasons.append("Unrealized Bank Credit: Settlement marked SETTLED by gateway but no cleared positive bank deposit or valid UTR received.")
-            leakage += net_settlement
             if discrepancy_type == "UNKNOWN_DISCREPANCY":
                 discrepancy_type = "UNREALIZED_BANK_CREDIT"
                 action = "INITIATE_UNREALIZED_BANK_TRACE"
@@ -234,14 +222,13 @@ def diagnose_discrepancy(row):
             evidence_parts.append(f"Gateway marked SETTLED for INR {net_settlement:,.2f} but bank record is invalid, uncleared ({clearing_status}), zero, or missing UTR.")
             
         # -------------------------------------------------------------
-        # State 9: Bank Realization Shortfall / Over-Credit
+        # 8. State: Bank Realization Shortfall / Over-Credit
         # -------------------------------------------------------------
         else:
             bank_diff = round(net_settlement - float(bank_credit), 2)
             if bank_diff > 2.0:
                 reasons.append(f"Bank Credit Mismatch: Expected INR {net_settlement:,.2f} but bank realized INR {float(bank_credit):,.2f} (Shortfall: INR {bank_diff:,.2f}).")
-                leakage += bank_diff
-                b_var = bank_diff
+                b_leak = bank_diff
                 if discrepancy_type == "UNKNOWN_DISCREPANCY":
                     discrepancy_type = "BANK_AMOUNT_MISMATCH"
                     action = "INITIATE_BANK_RECONCILIATION_QUERY"
@@ -255,6 +242,9 @@ def diagnose_discrepancy(row):
                     action = "LOG_FAVORABLE_BANK_VARIANCE"
                     claim_type = "FAVORABLE_BANK_VARIANCE"
 
+    # -------------------------------------------------------------
+    # 9. Exact Canonical Paisa Leakage Calculation
+    # -------------------------------------------------------------
     if not reasons:
         return {
             'status': 'RECONCILED_CLEAN',
@@ -269,13 +259,22 @@ def diagnose_discrepancy(row):
             'evidence': 'Full 3-way synchronization verified.'
         }
         
+    if discrepancy_type == 'SETTLEMENT_ON_HOLD':
+        total_leakage = round(net_settlement + f_leak + t_leak, 2)
+    elif discrepancy_type == 'UNREALIZED_BANK_CREDIT':
+        total_leakage = round(net_settlement + f_leak + t_leak, 2)
+    elif discrepancy_type == 'FEE_UNDERCHARGE':
+        total_leakage = 0.0
+    else:
+        total_leakage = round(f_leak + t_leak + b_leak, 2)
+        
     return {
         'status': 'DISCREPANCY_DETECTED',
         'discrepancy_type': discrepancy_type,
-        'leakage_amount': round(leakage, 2),
-        'fee_variance': round(f_var, 2),
-        'tax_variance': round(t_var, 2),
-        'bank_variance': round(b_var, 2),
+        'leakage_amount': total_leakage,
+        'fee_variance': round(f_leak, 2),
+        'tax_variance': round(t_leak, 2),
+        'bank_variance': round(b_leak, 2),
         'root_cause': " | ".join(reasons),
         'recommended_action': action,
         'claim_type': claim_type,
