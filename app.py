@@ -592,58 +592,94 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
         if st.button("Generate Resolution Workflows & Draft Journal Entries"):
             t_heal_start = time.time()
             heal_logs = []
+            formatted_session_audits = []
+            db_audit_rows = []
             
-            for idx, row in df_exceptions.iterrows():
+            for i, (idx, row) in enumerate(df_exceptions.iterrows(), 1):
                 ord_id = row['order_id']
-                f_var = max(0.0, float(row['fee_variance']))
-                t_var = max(0.0, float(row['tax_variance']))
-                b_var = max(0.0, float(row['bank_variance']))
-                tot_leak = round(f_var + t_var + b_var, 2)
+                diag = diagnose_discrepancy(row.to_dict())
+                disc_type = diag['discrepancy_type']
+                tot_leak = diag['leakage_amount']
+                ml_conf = float(row.get('ai_anomaly_risk', 0.50))
                 
-                dr_entry = f"DR: 1140 Gateway Settlement Receivable (INR {tot_leak:,.2f})"
-                cr_entry = f"CR: 5120 Fee Expense (INR {f_var:,.2f}) | CR: 2210 GST Input Tax (INR {t_var:,.2f})"
-                action_code = f"PROPOSED_JOURNAL_ADJUSTMENT | {dr_entry} // {cr_entry}"
+                # --- TRUE BALANCED GAAP DOUBLE-ENTRY JOURNAL MAPPING (Total Debits == Total Credits) ---
+                f_var = max(0.0, float(row.get('fee_variance') or 0.0))
+                t_var = max(0.0, float(row.get('tax_variance') or 0.0))
+                b_var = max(0.0, float(row.get('bank_variance') or 0.0))
+                net_settle = float(row.get('net_settlement_amount') or 0.0)
+                
+                if disc_type == 'SETTLEMENT_ON_HOLD':
+                    dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
+                    cr_entry = f"CR 2050: Gateway Escrow Suspense Clearing (INR {tot_leak:,.2f})"
+                elif disc_type == 'UNREALIZED_BANK_CREDIT':
+                    dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
+                    cr_entry = f"CR 1090: Bank Realization Inflow Suspense (INR {tot_leak:,.2f})"
+                elif disc_type == 'BANK_AMOUNT_MISMATCH':
+                    dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
+                    cr_entry = f"CR 1090: Bank Realization Inflow Suspense (INR {tot_leak:,.2f})"
+                elif disc_type == 'MISSING_GATEWAY_RECORD':
+                    dr_entry = f"DR 1145: Unsettled Merchant Order Clearing (INR {tot_leak:,.2f})"
+                    cr_entry = f"CR 4010: Sales Revenue Suspense (INR {tot_leak:,.2f})"
+                elif disc_type == 'GST_MISMATCH':
+                    dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
+                    cr_entry = f"CR 2210: GST Input Tax Credit (INR {tot_leak:,.2f})"
+                else: # FEE_OVERCHARGE or Compound Discrepancies
+                    dr_entry = f"DR 1140: Gateway Settlement Receivable (INR {tot_leak:,.2f})"
+                    cr_parts = []
+                    if f_var > 0:
+                        cr_parts.append(f"CR 5120: Fee Expense (INR {f_var:,.2f})")
+                    if t_var > 0:
+                        cr_parts.append(f"CR 2210: GST Input Tax (INR {t_var:,.2f})")
+                    if b_var > 0:
+                        cr_parts.append(f"CR 1090: Bank Suspense (INR {b_var:,.2f})")
+                    if not cr_parts:
+                        cr_parts.append(f"CR 5120: Fee Expense (INR {tot_leak:,.2f})")
+                    cr_entry = " | ".join(cr_parts)
+                    
+                action_code = f"PROPOSED_JOURNAL | {dr_entry} // {cr_entry}"
+                
+                # Dynamic API-ready dispute JSON payload mapped to actual diagnostic state
+                dispute_payload = {
+                    "dispute_ref": f"DSP-{ord_id}",
+                    "order_id": ord_id,
+                    "claim_type": diag['claim_type'],
+                    "discrepancy_category": disc_type,
+                    "claim_amount": tot_leak,
+                    "ai_confidence_score": round(ml_conf, 4),
+                    "evidence": diag['evidence']
+                }
                 
                 heal_logs.append({
                     'Order ID': ord_id,
-                    'Discrepancy Cause': row['Exception Cause'],
+                    'Discrepancy Category': disc_type,
+                    'Discrepancy Cause': diag['root_cause'],
                     'Claimable Leakage (INR)': tot_leak,
                     'Proposed Journal Adjustment': action_code,
-                    'Dispute API Payload': json.dumps({
-                        "dispute_ref": f"DSP-{ord_id}",
-                        "order_id": ord_id,
-                        "claim_type": "MDR_RATE_OVERCHARGE",
-                        "claim_amount": tot_leak,
-                        "ai_confidence_score": float(row['ai_anomaly_risk']),
-                        "evidence": "Contract MDR vs Gateway Deductions mismatch"
-                    })
+                    'Dispute API Payload': json.dumps(dispute_payload)
                 })
+                
+                formatted_session_audits.append({
+                    'audit_id': i,
+                    'order_id': ord_id,
+                    'anomaly_type': disc_type,
+                    'leakage_amount': tot_leak,
+                    'root_cause_explanation': diag['root_cause'],
+                    'action_taken': action_code
+                })
+                
+                db_audit_rows.append((
+                    ord_id,
+                    disc_type,
+                    tot_leak,
+                    round(ml_conf, 4), # Live genuine ML probability score
+                    diag['root_cause'],
+                    action_code,
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                ))
                 
             df_heal = pd.DataFrame(heal_logs)
             t_heal_elapsed = round((time.time() - t_heal_start) * 1000, 2)
-            total_recovered_amount = df_heal['Claimable Leakage (INR)'].sum()
-            
-            # Format and save into session_state for dynamic Module 0 view
-            formatted_session_audits = []
-            db_audit_rows = []
-            for i, h in enumerate(heal_logs, 1):
-                formatted_session_audits.append({
-                    'audit_id': i,
-                    'order_id': h['Order ID'],
-                    'anomaly_type': 'PROPOSED_RECOVERY_CLAIM',
-                    'leakage_amount': h['Claimable Leakage (INR)'],
-                    'root_cause_explanation': h['Discrepancy Cause'],
-                    'action_taken': h['Proposed Journal Adjustment']
-                })
-                db_audit_rows.append((
-                    h['Order ID'],
-                    'PROPOSED_RECOVERY_CLAIM',
-                    h['Claimable Leakage (INR)'],
-                    0.95,
-                    h['Discrepancy Cause'],
-                    h['Proposed Journal Adjustment'],
-                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                ))
+            total_recovered_amount = df_heal['Claimable Leakage (INR)'].sum() if not df_heal.empty else 0.0
             st.session_state['session_audit_logs'] = formatted_session_audits
             
             try:
@@ -734,6 +770,27 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             df_u_gw = pd.read_csv(file_gw)
             df_u_bank = pd.read_csv(file_bank)
             
+            # 1. Basic Schema & Required Column Validation
+            req_orders = {'order_id', 'order_amount'}
+            req_gw = {'settlement_id', 'order_id', 'gateway_txn_id', 'net_settlement_amount'}
+            req_bank = {'gateway_txn_id', 'credit_amount'}
+            
+            if not req_orders.issubset(df_u_orders.columns):
+                st.error(f"Validation Error: Orders CSV is missing required columns: {req_orders - set(df_u_orders.columns)}")
+                st.stop()
+            if not req_gw.issubset(df_u_gw.columns):
+                st.error(f"Validation Error: Gateway CSV is missing required columns: {req_gw - set(df_u_gw.columns)}")
+                st.stop()
+            if not req_bank.issubset(df_u_bank.columns):
+                st.error(f"Validation Error: Bank CSV is missing required columns: {req_bank - set(df_u_bank.columns)}")
+                st.stop()
+                
+            # 2. Check and flag duplicate bank realization records
+            dup_bank_count = df_u_bank.duplicated(subset=['gateway_txn_id']).sum()
+            if dup_bank_count > 0:
+                st.warning(f"Reconciliation Warning: Found {dup_bank_count} duplicate gateway transaction ID(s) in Bank Statements. Deduplicating to prevent double-credit exposure.")
+                df_u_bank = df_u_bank.drop_duplicates(subset=['gateway_txn_id'], keep='first')
+                
             mem_conn = sqlite3.connect(":memory:")
             df_u_orders.to_sql("temp_orders", mem_conn, index=False, if_exists="replace")
             df_u_gw.to_sql("temp_gw", mem_conn, index=False, if_exists="replace")
@@ -865,10 +922,10 @@ elif nav == "4. Machine Learning Benchmark & Zero-Leakage Pipeline":
         
         st.markdown("<hr style='border-color: #1C273E;'/>", unsafe_allow_html=True)
         st.markdown("""
-        #### Technical Machine Learning Specification & Anomaly Framing:
-        * **Active Inference & Rule-Generalization:** The trained `best_reconciliation_pipeline.joblib` operates as an active surrogate classifier that generalizes deterministic financial rule outputs from standard upstream operational metadata (`order_amount`, `log_amount`, `payment_method`, `merchant_category`, `contract_mdr_rate`, `order_hour`, `is_high_value`, `category_risk_prior`). This allows the controller to predict anomaly risk even when full downstream fee or tax breakdown fields are absent, unparsed, or partially reported by third-party gateways.
-        * **Zero Feature Leakage Architecture:** Direct rule-derived mathematical features (such as `fee_variance` or `actual_fee_charged`) are strictly excluded from the training feature set. Models are trained purely on operational input signals to ensure genuine generalization.
-        * **Preprocessing Architecture:** Scikit-learn `Pipeline` utilizing `ColumnTransformer` with `StandardScaler` for continuous dimensions and `OneHotEncoder(handle_unknown='ignore')` for discrete instruments.
-        * **Class Imbalance Management:** Tuned `scale_pos_weight` in XGBoost and balanced class weights in Random Forest / Logistic Regression to handle the minority anomaly distribution.
-        * **Target Optimization:** Primary optimization on balanced **Recall & PR-AUC** to maximize recovery of minority financial leakages.
+        #### Technical Machine Learning Specification & Production Selection:
+        * **Active Production Model Selection Rationale:** In real-time financial exception screening, models must balance high minority recall with inference throughput and precision. While Gradient Boosting achieved the highest PR-AUC (0.3590) and Logistic Regression achieved the highest raw linear recall (73.0%), **XGBoost (0.8059 ROC-AUC / 0.3459 PR-AUC / 70.2% Recall)** was selected as the active production engine due to its superior non-linear decision boundary and sub-millisecond compiled scoring latency.
+        * **Surrogate Generalization:** Operates strictly on 8 standard checkout features (`order_amount`, `log_amount`, `payment_method`, `merchant_category`, `contract_mdr_rate`, `order_hour`, `is_high_value`, `category_risk_prior`) to flag anomaly risk even when downstream fee breakdown fields are unparsed or partially delayed.
+        * **Zero Feature Leakage:** Ground-truth fee columns (`actual_fee_charged`, `gst_charged`, `fee_variance`) are strictly excluded during training.
+        * **Preprocessing Architecture:** Scikit-learn `Pipeline` using `ColumnTransformer` (`StandardScaler` + `OneHotEncoder(handle_unknown='ignore')`).
+        * **Class Imbalance Handling:** Tuned `scale_pos_weight` to account for the minority anomaly distribution (~9.8%).
         """)

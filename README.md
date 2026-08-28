@@ -164,12 +164,17 @@ To ensure absolute reproducibility and avoid artificial synthetic assumptions (s
 
 When the Resolution Workflow engine executes, it drafts standard Core Banking System (CBS) General Ledger journal adjustments for finance review:
 
-| Account Code | Account Name | Account Type | Normal Balance | Description |
+| Account Code | Account Name | Account Type | Normal Balance | Discrepancy Usage |
 |---|---|---|---|---|
-| **1140** | Gateway Settlement Receivable | Current Asset | Debit | Overcharged fees and held funds claimable from the gateway |
-| **5120** | Merchant Processing Fee Expense | Operating Expense | Credit (Reversal) | Deduction reversal for excess MDR fees billed |
-| **2210** | GST Input Tax Credit (ITC) | Current Liability / Asset | Credit (Reversal) | Tax adjustment for over-billed GST assessments |
-| **1010** | Operating Bank Account | Current Asset | Debit | Final realized deposit verified with bank UTR |
+| **1140** | Gateway Settlement Receivable | Current Asset | Debit | Overcharged fees, held funds, and uncredited deposits claimable from gateway |
+| **5120** | Merchant Processing Fee Expense | Operating Expense | Credit (Reversal) | Deduction reversal for excess MDR processing fees |
+| **2210** | GST Input Tax Credit (ITC) | Current Asset / Liability | Credit (Reversal) | Tax line reversal for over-assessed 28% GST |
+| **2050** | Gateway Escrow Suspense Clearing | Current Liability | Credit | Balancing suspense entry for funds on hold in gateway escrow |
+| **1090** | Bank Inflow Clearing Suspense | Current Asset | Credit | Balancing suspense entry for unrealized bank credits or clearing shortfalls |
+| **1145** | Unsettled Merchant Order Clearing | Current Asset | Debit | Holding account for merchant orders unacknowledged by gateway |
+| **4010** | Sales Revenue Suspense | Revenue Suspense | Credit | Balancing entry for unconfirmed merchant order revenue |
+
+*Every generated journal entry is guaranteed to be 100% mathematically balanced (Total Debits == Total Credits).*
 
 ---
 
