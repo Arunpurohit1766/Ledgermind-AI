@@ -395,7 +395,7 @@ if nav == "0. 3-Way System Architecture & Data Funnel":
         </p>
         <ol style="color: #CBD5E1; font-size: 0.88rem; line-height: 1.8;">
             <li><b>Source 1: Merchant Order DB (50,000 Records):</b> The customer checkout record with purchase amounts and payment instruments.</li>
-            <li><b>Source 2: Payment Gateway Feed (48,476 Records):</b> Razorpay's settlement deductions for contracted MDR fees, 18% GST, and risk escrow holds.</li>
+            <li><b>Source 2: Payment Gateway Feed (48,515 Records):</b> Razorpay's settlement deductions for contracted MDR fees, 18% GST, and risk escrow holds.</li>
             <li><b>Source 3: Bank Clearing Statements (48,008 Records):</b> The acquiring bank (HDFC/ICICI) ledger of cleared deposits matched with a 12-digit UTR reference.</li>
         </ol>
         <p style="color: #94A3B8; font-size: 0.9rem;">
@@ -413,7 +413,7 @@ if nav == "0. 3-Way System Architecture & Data Funnel":
            +---> [   524 REFUNDED ] (Customer order cancellations)
            |
            v
-      48,476 SUCCESS Orders (Sent to Razorpay Gateway)
+      48,515 SUCCESS Orders (Sent to Razorpay Gateway)
            |
            +---> [   468 ON_HOLD ] (Gateway risk engine escrow hold)
            |
@@ -462,7 +462,7 @@ elif nav == "1. Multi-Source Batch Verification & Resolution Workflows":
     
     col_ctrl1, col_ctrl2 = st.columns([1, 2])
     with col_ctrl1:
-        batch_size = st.select_slider("Select Batch Verification Size (Records)", options=[50, 100, 250, 500, 1000, 5000, 48476], value=500)
+        batch_size = st.select_slider("Select Batch Verification Size (Records)", options=[50, 100, 250, 500, 1000, 5000, 48515], value=500)
     with col_ctrl2:
         st.markdown("<br/>", unsafe_allow_html=True)
         run_batch = st.button("Run Multi-Source 3-Way Reconciliation")
@@ -771,7 +771,7 @@ BNK-003,GTX-104,UTR1000998814,21577.60,CLEARED"""
             df_u_bank = pd.read_csv(file_bank)
             
             # 1. Basic Schema & Required Column Validation
-            req_orders = {'order_id', 'order_amount'}
+            req_orders = {'order_id', 'order_amount', 'payment_method', 'merchant_category'}
             req_gw = {'settlement_id', 'order_id', 'gateway_txn_id', 'net_settlement_amount'}
             req_bank = {'gateway_txn_id', 'credit_amount'}
             

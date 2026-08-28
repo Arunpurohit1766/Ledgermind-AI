@@ -38,26 +38,26 @@ The relational database models the real-world drop-offs, gateway holds, and bank
 ```
   50,000 Ingested Orders (Merchant DB)
        |
-       +---> [ 1,000 FAILED ] (Bank network timeout / OTP failure)
-       +---> [   524 REFUNDED ] (Customer order cancellations)
+       +---> [ 972 FAILED ] (Bank network timeout / OTP failure)
+       +---> [   513 REFUNDED ] (Customer order cancellations)
        |
        v
-  48,476 SUCCESS Orders (Gateway Processing Batch)
+  48,515 SUCCESS Orders (Gateway Processing Batch)
        |
-       +---> [   468 ON_HOLD ] (Gateway risk engine escrow hold)
+       +---> [   1,276 ON_HOLD ] (Gateway risk engine escrow hold)
        |
        v
-  48,008 SETTLED Transactions (Cleared in Bank Account with 12-Digit UTR)
+  47,239 SETTLED Transactions (Cleared in Bank Account with 12-Digit UTR)
 ```
 
 | Funnel Stage | Record Count | Percentage | Operational Meaning |
 |---|---|---|---|
 | **Total Ingested Orders** | 50,000 | 100.0% | Total customer checkout attempts in merchant database |
-| **Failed / Declined** | 1,000 | 2.0% | Payment declined at acquiring bank / OTP stage |
-| **Refunded Orders** | 524 | 1.05% | Order cancelled/returned, capital refunded to buyer |
-| **Successful Orders** | 48,476 | 96.95% | Valid completed customer checkouts sent to Gateway |
-| **Gateway Escrow Holds** | 468 | 0.94% | Payout delayed by Gateway risk/compliance engines |
-| **Verified Bank Deposits** | 48,008 | 96.01% | Net cash cleared in merchant bank account with UTR |
+| **Failed / Declined** | 972 | 1.94% | Payment declined at acquiring bank / OTP stage |
+| **Refunded Orders** | 513 | 1.03% | Order cancelled/returned, capital refunded to buyer |
+| **Successful Orders** | 48,515 | 97.03% | Valid completed customer checkouts sent to Gateway |
+| **Gateway Escrow Holds** | 1,276 | 2.55% | Payout delayed by Gateway risk/compliance engines |
+| **Verified Bank Deposits** | 47,239 | 94.48% | Net cash cleared in merchant bank account with UTR |
 
 ---
 
@@ -109,7 +109,7 @@ The relational database models the real-world drop-offs, gateway holds, and bank
 - **Multi-Source Schema Inspector:** Inspect live data records across `orders`, `gateway_settlements`, `bank_statements`, and `audit_ledger`.
 
 ### Module 1: Multi-Source Batch Verification & Exception Resolution Workflows
-- **3-Way Relational Join:** Ingests dynamic batches (50 to 48,476 records) joining Orders, Gateway settlements, and Bank UTRs in sub-second execution (<15 ms for 500 records; 552 ms for full 48k-record ledger).
+- **3-Way Relational Join:** Ingests dynamic batches (50 to 48,515 records) joining Orders, Gateway settlements, and Bank UTRs in sub-second execution (<15 ms for 500 records; 552 ms for full 48k-record ledger).
 - **Active ML Anomaly Scoring:** Uses the trained Scikit-learn XGBoost pipeline (`best_reconciliation_pipeline.joblib`) to score every transaction with a deterministic **AI Anomaly Risk Probability**.
 - **The Honest Exception List:** Isolates non-matching records (MDR Overcharge, GST Miscalculation, Escrow Hold, Unrealized Bank Credit) with root-cause diagnostics.
 - **Resolution Workflow & Journal Generation:** On 1-click execution:

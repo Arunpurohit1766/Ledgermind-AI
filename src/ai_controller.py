@@ -41,7 +41,10 @@ def diagnose_discrepancy(row):
             'evidence': f"Order {row.get('order_id')} (INR {amt:,.2f}) exists in Merchant Orders DB with no matching gateway settlement record."
         }
         
-    contract_rate = float(contract_rate or 0.015)
+    if contract_rate is None or pd.isna(contract_rate):
+        contract_rate = 0.015
+    else:
+        contract_rate = float(contract_rate)
     actual_fee = float(actual_fee or 0.0)
     gst_charged = float(gst_charged or 0.0)
     net_settlement = float(net_settlement or 0.0)
@@ -97,20 +100,26 @@ def diagnose_discrepancy(row):
     # State 5: Missing Bank Realization Record (Settled by Gateway but never received in Bank)
     # -------------------------------------------------------------
     if settle_status == 'SETTLED':
-        is_bank_missing = (bank_credit is None or pd.isna(bank_credit) or pd.isna(utr_number) or str(utr_number).strip() == '' or str(utr_number) == 'nan')
+        is_bank_missing = (
+            bank_credit is None or 
+            pd.isna(bank_credit) or 
+            pd.isna(utr_number) or 
+            str(utr_number).strip() in ['', 'nan', 'N/A', 'None'] or 
+            float(bank_credit) <= 0
+        )
         if is_bank_missing:
-            reasons.append("Unrealized Bank Credit: Settlement marked SETTLED by gateway but no bank deposit record or UTR reference found.")
+            reasons.append("Unrealized Bank Credit: Settlement marked SETTLED by gateway but no positive bank deposit or valid UTR received.")
             leakage += net_settlement
             if discrepancy_type == "UNKNOWN_DISCREPANCY":
                 discrepancy_type = "UNREALIZED_BANK_CREDIT"
                 action = "INITIATE_UNREALIZED_BANK_TRACE"
                 claim_type = "UNREALIZED_SETTLEMENT_DEPOSIT"
-            evidence_parts.append(f"Gateway marked SETTLED for INR {net_settlement:,.2f} but 0 bank credit or UTR was received in bank statement.")
+            evidence_parts.append(f"Gateway marked SETTLED for INR {net_settlement:,.2f} but invalid/zero/negative bank credit (INR {float(bank_credit or 0):,.2f}) or missing UTR was received.")
             
         # -------------------------------------------------------------
         # State 6: Bank Realization Amount Mismatch (Bank credited less than net settlement)
         # -------------------------------------------------------------
-        elif float(bank_credit) > 0:
+        else: # float(bank_credit) > 0
             bank_diff = round(net_settlement - float(bank_credit), 2)
             if abs(bank_diff) > 2.0:
                 reasons.append(f"Bank Credit Mismatch: Expected INR {net_settlement:,.2f} but bank realized INR {float(bank_credit):,.2f} (Shortfall: INR {bank_diff:,.2f}).")

@@ -154,7 +154,7 @@ def initialize_database(db_path, n_records=50000, random_state=42):
             ts_bank = (datetime.strptime(ts_settle, '%Y-%m-%d %H:%M:%S') + timedelta(hours=int(np.random.randint(4, 24)))).strftime('%Y-%m-%d %H:%M:%S')
             
             if np.random.rand() < 0.015:
-                credit_amt = np.round(net_settlement - np.random.uniform(25.0, 180.0), 2)
+                credit_amt = np.round(max(0.0, net_settlement - np.random.uniform(25.0, 180.0)), 2)
             else:
                 credit_amt = net_settlement
                 
