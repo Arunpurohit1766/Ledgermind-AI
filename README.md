@@ -1,6 +1,6 @@
 # LedgerMind AI — Multi-Source 3-Way Reconciliation & Resolution Engine
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ledgermind-ai-1766.streamlit.app/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -225,4 +225,4 @@ The application will launch in your browser at `http://localhost:8501`.
 * **Email:** `arunj.data1766@gmail.com`
 * **GitHub Profile:** [https://github.com/Arunpurohit1766](https://github.com/Arunpurohit1766)
 * **GitHub Repository:** [https://github.com/Arunpurohit1766/Ledgermind-AI](https://github.com/Arunpurohit1766/Ledgermind-AI)
-* **Live Streamlit Cloud Application:** [https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/](https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/)
+* **Live Streamlit Cloud Application:** [https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/](https://ledgermind-ai-1766.streamlit.app/)
