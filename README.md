@@ -225,4 +225,4 @@ The application will launch in your browser at `http://localhost:8501`.
 * **Email:** `arunj.data1766@gmail.com`
 * **GitHub Profile:** [https://github.com/Arunpurohit1766](https://github.com/Arunpurohit1766)
 * **GitHub Repository:** [https://github.com/Arunpurohit1766/Ledgermind-AI](https://github.com/Arunpurohit1766/Ledgermind-AI)
-* **Live Streamlit Cloud Application:** [https://ledgermind-dqkoh6evcwqlkkatlfajjj.streamlit.app/](https://ledgermind-ai-1766.streamlit.app/)
+* **Live Streamlit Cloud Application:** [https://ledgermind-ai-1766.streamlit.app/](https://ledgermind-ai-1766.streamlit.app/)
